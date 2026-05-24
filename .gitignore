@@ -1,0 +1,20 @@
+# ─── Resultados de auditorías — DATOS SENSIBLES, NO PUBLICAR ──────────────────
+# Contienen el reconocimiento real de la red (IPs, MACs, puertos, SO, informes).
+informes/
+
+# ─── Temporales / logs de ejecución ──────────────────────────────────────────
+*.log
+.scan_token
+*.tmp
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ─── Sistema operativo ────────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store

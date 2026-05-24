@@ -1,0 +1,2343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HADES v2.2.0 | Tactical Cyber Center</title>
+    <!-- Google Fonts Premium -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #030805;
+            --panel-bg: rgba(5, 15, 8, 0.75);
+            --border-glow: #00ff66;
+            --border-color: rgba(0, 255, 102, 0.2);
+            --text-primary: #e0ffe8;
+            --text-secondary: #88c098;
+            --neon-accent: #00ff66;
+            --neon-alert: #ff0055;
+            --font-main: 'Outfit', sans-serif;
+            --font-mono: 'Share Tech Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(0, 255, 102, 0.05) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(255, 0, 85, 0.03) 0px, transparent 50%);
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            min-height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem;
+        }
+
+        /* Micro-animación sutil de respiración de rejilla de fondo */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 4px, 6px 100%;
+            z-index: 10;
+            pointer-events: none;
+            opacity: 0.4;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: 0 0 20px rgba(0, 255, 102, 0.05);
+            margin-bottom: 1.5rem;
+            backdrop-filter: blur(10px);
+            z-index: 20;
+        }
+
+        .logo-section h1 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: #fff;
+            text-shadow: 0 0 10px var(--neon-accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-section h1 span {
+            color: var(--neon-accent);
+            font-size: 0.9rem;
+            background: rgba(0, 255, 102, 0.1);
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+        .system-status {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 4px 12px;
+            border-radius: 20px;
+            border: 1px solid var(--border-color);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--neon-accent);
+            box-shadow: 0 0 8px var(--neon-accent);
+        }
+
+        .status-dot.idle {
+            background-color: #ff9f00;
+            box-shadow: 0 0 8px #ff9f00;
+        }
+
+        .status-dot.running {
+            background-color: var(--neon-accent);
+            box-shadow: 0 0 8px var(--neon-accent);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 1.5rem;
+            flex-grow: 1;
+            z-index: 20;
+        }
+
+        @media (max-width: 900px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+        }
+
+        .panel-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 1.2rem;
+            border-left: 3px solid var(--neon-accent);
+            padding-left: 10px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        /* Formulario y Controles */
+        .form-group {
+            margin-bottom: 1.2rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+        }
+
+        .form-control {
+            width: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px 15px;
+            color: #fff;
+            font-family: var(--font-mono);
+            font-size: 1rem;
+            outline: none;
+            transition: all 0.3s;
+        }
+
+        .form-control:focus {
+            border-color: var(--neon-accent);
+            box-shadow: 0 0 10px rgba(0, 255, 102, 0.15);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            font-family: var(--font-main);
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .btn-scan {
+            background: var(--neon-accent);
+            color: #000;
+            box-shadow: 0 0 15px rgba(0, 255, 102, 0.3);
+        }
+
+        .btn-scan:hover:not(:disabled) {
+            background: #00e058;
+            box-shadow: 0 0 25px rgba(0, 255, 102, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .btn-stop {
+            background: rgba(255, 0, 85, 0.1);
+            color: var(--neon-alert);
+            border: 1px solid rgba(255, 0, 85, 0.3);
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: var(--neon-alert);
+            color: #fff;
+            box-shadow: 0 0 20px rgba(255, 0, 85, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+
+        /* Consola de Logs Interactiva */
+        .console-wrapper {
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+            height: 100%;
+            min-height: 350px;
+        }
+
+        .console-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+            border-bottom: none;
+            padding: 8px 15px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+        }
+
+        .console {
+            flex-grow: 1;
+            background: #000;
+            border: 1px solid var(--border-color);
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+            padding: 1.5rem;
+            font-family: var(--font-mono);
+            font-size: 0.95rem;
+            color: #00ff66;
+            overflow-y: auto;
+            max-height: 500px;
+            white-space: pre-wrap;
+            box-shadow: inset 0 0 15px rgba(0, 255, 102, 0.1);
+        }
+
+        /* Estilización de barra de scroll */
+        .console::-webkit-scrollbar {
+            width: 8px;
+        }
+        .console::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.5);
+        }
+        .console::-webkit-scrollbar-thumb {
+            background: rgba(0, 255, 102, 0.2);
+            border-radius: 4px;
+        }
+        .console::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 255, 102, 0.4);
+        }
+
+        .quick-actions {
+            margin-top: 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .action-card {
+            background: rgba(0, 20, 10, 0.4);
+            border: 1px solid rgba(0, 255, 102, 0.1);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .action-card:hover {
+            background: rgba(0, 255, 102, 0.05);
+            border-color: var(--neon-accent);
+            box-shadow: 0 0 10px rgba(0, 255, 102, 0.1);
+        }
+
+        .info-footer {
+            margin-top: 1.5rem;
+            padding: 10px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-align: center;
+            border-top: 1px solid rgba(0, 255, 102, 0.1);
+            font-family: var(--font-mono);
+        }
+
+        /* Estilos del Flujo Visual de Escaneo (Timeline) */
+        .timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+            position: relative;
+            padding-left: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 13px;
+            top: 5px;
+            bottom: 5px;
+            width: 2px;
+            background: rgba(0, 255, 102, 0.1);
+            z-index: 1;
+        }
+
+        .timeline-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            z-index: 2;
+            opacity: 0.45;
+            transition: all 0.4s ease;
+        }
+
+        .timeline-item.active {
+            opacity: 1;
+            transform: translateX(4px);
+        }
+
+        .timeline-item.completed {
+            opacity: 0.9;
+        }
+
+        .timeline-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid rgba(136, 192, 152, 0.3);
+            background: rgba(5, 15, 8, 0.8);
+            margin-top: 3px;
+            flex-shrink: 0;
+            transition: all 0.4s ease;
+            position: relative;
+        }
+
+        .timeline-dot.active {
+            border-color: var(--neon-accent);
+            background: var(--neon-accent);
+            box-shadow: 0 0 10px var(--neon-accent);
+            animation: pulse-active 1.2s infinite alternate;
+        }
+
+        @keyframes pulse-active {
+            0% {
+                transform: scale(1);
+                box-shadow: 0 0 8px var(--neon-accent);
+            }
+            100% {
+                transform: scale(1.15);
+                box-shadow: 0 0 16px var(--neon-accent);
+            }
+        }
+
+        .timeline-dot.completed {
+            border-color: var(--neon-accent);
+            background: var(--neon-accent);
+            box-shadow: 0 0 5px var(--neon-accent);
+        }
+
+        .timeline-dot.completed::after {
+            content: '✓';
+            color: #030805;
+            font-size: 9px;
+            font-weight: 800;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .timeline-content h3 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            font-family: var(--font-main);
+            letter-spacing: 0.5px;
+        }
+
+        .timeline-content p {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            margin-top: 1px;
+        }
+        
+        .timeline-item.active .timeline-content h3 {
+            color: var(--neon-accent);
+            text-shadow: 0 0 5px rgba(0, 255, 102, 0.3);
+        }
+
+        /* =====================================================
+           BOTTOM PANELS ROW — Flujo en Vivo + Ollama IA
+           ===================================================== */
+        .bottom-panels-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        @media (max-width: 900px) {
+            .bottom-panels-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .mini-panel {
+            background: rgba(3, 8, 5, 0.92);
+            border: 1px solid rgba(0, 255, 102, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            backdrop-filter: blur(14px);
+            box-shadow: 0 0 16px rgba(0, 255, 102, 0.06), 0 4px 20px rgba(0,0,0,0.4);
+            transition: opacity 0.4s ease;
+            height: 330px; /* Panel más alto para ocupar el espacio liberado */
+            display: flex;
+            flex-direction: column;
+        }
+
+        .mini-panel.hidden {
+            opacity: 0;
+            pointer-events: none;
+            max-height: 0;
+            overflow: hidden;
+            border: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .lsw-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(0, 255, 102, 0.15);
+            background: rgba(0, 255, 102, 0.04);
+            user-select: none;
+            flex-shrink: 0;
+        }
+
+        .lsw-close {
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(255, 0, 85, 0.3);
+            border-radius: 4px;
+            background: rgba(255, 0, 85, 0.08);
+            color: var(--neon-alert);
+            font-size: 0.7rem;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: all 0.25s ease;
+            line-height: 1;
+            flex-shrink: 0;
+            margin-left: 8px;
+        }
+
+        .lsw-close:hover {
+            background: var(--neon-alert);
+            color: #fff;
+            box-shadow: 0 0 10px rgba(255, 0, 85, 0.4);
+        }
+
+        .lsw-title {
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--neon-accent);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .lsw-indicator {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--neon-accent);
+            box-shadow: 0 0 8px var(--neon-accent);
+            animation: pulse 1.4s infinite;
+        }
+
+        .lsw-body {
+            padding: 10px 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+
+        .lsw-line {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            line-height: 1.4;
+            animation: lsw-fadein 0.4s ease;
+        }
+
+        @keyframes lsw-fadein {
+            from { opacity: 0; transform: translateX(-6px); }
+            to   { opacity: 1; transform: translateX(0); }
+        }
+
+        .lsw-icon {
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .lsw-text {
+            color: rgba(224, 255, 232, 0.75);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .lsw-text.accent  { color: var(--neon-accent); }
+        .lsw-text.alert   { color: var(--neon-alert); }
+        .lsw-text.warn    { color: #ff9f00; }
+        .lsw-text.muted   { color: rgba(136, 192, 152, 0.45); }
+
+        .lsw-footer {
+            padding: 6px 12px;
+            border-top: 1px solid rgba(0, 255, 102, 0.1);
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            color: rgba(136, 192, 152, 0.4);
+            display: flex;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        /* =====================================================
+           OLLAMA AI METRICS PANEL
+           ===================================================== */
+        .ai-metrics {
+            padding: 15px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex-grow: 1;
+            justify-content: center;
+        }
+
+        .ai-metric-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .ai-metric-label {
+            display: flex;
+            justify-content: space-between;
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .ai-metric-value {
+            color: var(--neon-accent);
+            font-weight: 600;
+        }
+
+        .ai-bar-track {
+            width: 100%;
+            height: 6px;
+            background: rgba(0, 255, 102, 0.06);
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid rgba(0, 255, 102, 0.1);
+        }
+
+        .ai-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.6s ease;
+            width: 0%;
+        }
+
+        .ai-bar-fill.green  { background: linear-gradient(90deg, #00cc55, #00ff66); box-shadow: 0 0 6px rgba(0,255,102,0.4); }
+        .ai-bar-fill.cyan   { background: linear-gradient(90deg, #00b4d8, #00f5ff); box-shadow: 0 0 6px rgba(0,245,255,0.4); }
+        .ai-bar-fill.purple { background: linear-gradient(90deg, #8338ec, #c77dff); box-shadow: 0 0 6px rgba(131,56,236,0.4); }
+        .ai-bar-fill.amber  { background: linear-gradient(90deg, #e09f00, #ffc300); box-shadow: 0 0 6px rgba(255,195,0,0.4); }
+
+        @keyframes ai-shimmer {
+            0%   { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+
+        .ai-bar-fill.active {
+            background-size: 200% 100%;
+            animation: ai-shimmer 1.5s linear infinite;
+        }
+
+        .ai-bar-fill.green.active  { background: linear-gradient(90deg, #00cc55, #00ff66, #00cc55, #00ff66); background-size: 200% 100%; }
+        .ai-bar-fill.cyan.active   { background: linear-gradient(90deg, #00b4d8, #00f5ff, #00b4d8, #00f5ff); background-size: 200% 100%; }
+        .ai-bar-fill.purple.active { background: linear-gradient(90deg, #8338ec, #c77dff, #8338ec, #c77dff); background-size: 200% 100%; }
+        .ai-bar-fill.amber.active  { background: linear-gradient(90deg, #e09f00, #ffc300, #e09f00, #ffc300); background-size: 200% 100%; }
+
+        .ai-status-line {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            padding: 6px 14px;
+            border-top: 1px solid rgba(0, 255, 102, 0.1);
+            color: var(--text-secondary);
+        }
+
+        .ai-status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #555;
+            flex-shrink: 0;
+        }
+
+        .ai-status-dot.active {
+            background: var(--neon-accent);
+            box-shadow: 0 0 8px var(--neon-accent);
+            animation: pulse 1.2s infinite;
+        }
+
+        .ai-status-dot.idle {
+            background: #ff9f00;
+            box-shadow: 0 0 4px #ff9f00;
+        }
+
+        /* Modal del Asistente de IA */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-overlay.hidden {
+            display: none !important;
+        }
+
+        .modal-content {
+            background: rgba(5, 15, 8, 0.95);
+            border: 2px solid var(--neon-accent);
+            box-shadow: 0 0 30px rgba(0, 255, 102, 0.2);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            display: flex;
+            flex-direction: column;
+            max-height: 80vh;
+            overflow: hidden;
+            animation: modalSlide 0.3s cubic-bezier(0.1, 0.8, 0.3, 1);
+        }
+
+        @keyframes modalSlide {
+            from { transform: translateY(30px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid rgba(0, 255, 102, 0.2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(0, 255, 102, 0.05);
+        }
+
+        .modal-header h3 {
+            font-family: var(--font-mono);
+            color: #fff;
+            text-shadow: 0 0 10px var(--neon-accent);
+            margin: 0;
+            font-size: 1.1rem;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.2rem;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .modal-close:hover {
+            color: var(--neon-alert);
+        }
+
+        .modal-body {
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+
+
+        .quick-questions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        @media (max-width: 600px) {
+            .quick-questions {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .qq-btn {
+            background: rgba(0, 20, 10, 0.5);
+            border: 1px solid rgba(0, 255, 102, 0.15);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text-secondary);
+            font-family: var(--font-main);
+            font-size: 0.75rem;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.2s;
+        }
+
+        .qq-btn:hover {
+            background: rgba(0, 255, 102, 0.08);
+            border-color: var(--neon-accent);
+            color: #fff;
+        }
+
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid rgba(0, 255, 102, 0.2);
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        /* === PARADA DE EMERGENCIA: estados visuales === */
+        /* Pulso rojo cuando el agente está corriendo */
+        @keyframes emergency-pulse {
+            0%   { box-shadow: 0 0 10px rgba(255,0,85,0.5), inset 0 0 10px rgba(255,0,85,0.1); }
+            50%  { box-shadow: 0 0 25px rgba(255,0,85,0.9), inset 0 0 20px rgba(255,0,85,0.2); }
+            100% { box-shadow: 0 0 10px rgba(255,0,85,0.5), inset 0 0 10px rgba(255,0,85,0.1); }
+        }
+        #btnStop.emergency-active {
+            animation: emergency-pulse 1.2s infinite;
+            border-color: var(--neon-alert) !important;
+        }
+        /* Estado TERMINANDO: spinner en el botón */
+        @keyframes btn-spin {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+        #btnStop.terminating {
+            opacity: 0.85;
+            cursor: not-allowed;
+            background: rgba(255, 0, 85, 0.35) !important;
+        }
+        #btnStop.terminating .stop-spinner {
+            display: inline-block;
+            width: 14px; height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: btn-spin 0.7s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+        /* Flash verde de confirmación */
+        @keyframes stop-confirm-flash {
+            0%   { background: rgba(0,255,102,0.35); }
+            100% { background: transparent; }
+        }
+        #btnStop.stop-confirmed {
+            animation: stop-confirm-flash 0.8s ease-out forwards;
+            border-color: var(--neon-accent) !important;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Principal -->
+    <header class="header">
+        <div class="logo-section" style="display:flex; align-items:center; gap:16px;">
+            <!-- Logo oficial CIBERAGENTES — esquina superior izquierda -->
+            <img src="assets/logo_ciberagentes_doc.png" alt="CIBERAGENTES — Agencia de Ciberseguridad" title="CIBERAGENTES — Agencia de Ciberseguridad"
+                 style="height:68px; width:auto; border-radius:8px; filter: drop-shadow(0 0 12px rgba(24,156,212,0.7));">
+            <div>
+                <h1>HADES <span>v2.2.0</span></h1>
+                <div style="font-family: var(--font-mono); font-size:0.7rem; letter-spacing:2px; color: var(--text-secondary); margin-top:3px;">CIBERAGENTES · AGENCIA DE CIBERSEGURIDAD</div>
+            </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <button class="action-card" style="margin: 0; padding: 6px 15px; background: rgba(0, 255, 102, 0.1); border-color: var(--neon-accent); font-family: var(--font-mono); font-size: 0.85rem;" onclick="window.open('MANUAL_USUARIO.md', '_blank')">📖 Manual de Usuario</button>
+            <div class="system-status">
+                <span style="color: var(--text-secondary);">ESTADO DEL AGENTE:</span>
+                <div class="status-badge">
+                    <div id="statusDot" class="status-dot idle"></div>
+                    <span id="statusText">IDLE</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Panel de Control y Consola en Grid -->
+    <main class="grid">
+        <!-- Panel Izquierdo: Controles y Flujo Visual -->
+        <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+            <!-- Controles -->
+            <section class="panel">
+                <h2 class="panel-title">Parámetros de Vigilancia</h2>
+                
+         <div class="form-group">
+    <label for="autoOption">Modo de escaneo automático</label>
+    <select id="autoOption" class="form-control">
+        <option value="auto">Auto (detección dinámica de subred)</option>
+        <option value="full">Escaneo completo (toda la subred)</option>
+        <option value="custom">Custom (manual)</option>
+    </select>
+    <small style="font-size:0.75rem; color: var(--text-secondary); margin-top:4px; display:block;">
+        Seleccione una opción; la primera es "Auto".
+    </small>
+</div>
+<div class="form-group">
+    <label for="targetRange">Rango de Red de Destino (manual)</label>
+    <input type="text" id="targetRange" class="form-control" placeholder="ej. 10.10.1.0/24 - 10.10.2.1/24">
+    <span id="rangeInfo" style="font-size:0.75rem; color: var(--text-secondary); margin-top:4px; display:block;"></span>
+</div>
+
+                <div class="form-group">
+                    <label for="duration">Duración Captura Tshark (segundos)</label>
+                    <input type="number" id="duration" class="form-control" value="30" min="5" max="300">
+                </div>
+
+                <div style="margin-top: 1.5rem;">
+                    <button id="btnScan" class="btn btn-scan">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12A10 10 0 1 1 12 2v10z"></path><path d="M12 2a10 10 0 0 1 10 10H12z"></path></svg>
+                        Lanzar Vigilancia
+                    </button>
+                    
+                    <button id="btnStop" class="btn btn-stop" title="Termina de inmediato TODOS los procesos del agente (Ctrl+C en terminal)">
+                        <span class="stop-spinner" style="display:none;"></span>
+                        <svg id="stopIcon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                        <span id="stopBtnText">⚡ Parada de Emergencia</span>
+                    </button>
+                </div>
+
+                <!-- MAPA DE RED INTERACTIVO -->
+                <h2 class="panel-title" style="margin-top: 2rem; margin-bottom: 0.8rem; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🕸️ Mapa de Red</span>
+                    <span style="display: flex; gap: 6px;">
+                        <button id="btnResetGraph" class="btn" style="padding: 2px 8px; font-size: 0.7rem; margin: 0; width: auto; background: rgba(0, 255, 102, 0.05); border-color: rgba(0, 255, 102, 0.3);" title="Centrar y reajustar vista">Centrar</button>
+                        <button id="btnClearGraph" class="btn" style="padding: 2px 8px; font-size: 0.7rem; margin: 0; width: auto; background: rgba(255, 0, 85, 0.05); border-color: rgba(255, 0, 85, 0.3);" title="Limpiar hosts del mapa">Limpiar</button>
+                    </span>
+                </h2>
+                
+                <div class="graph-container" style="background: #040406; border: 1px solid rgba(0, 255, 102, 0.15); border-radius: 8px; position: relative; overflow: hidden; height: 350px; margin-bottom: 1.5rem; box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.9);">
+                    <canvas id="networkGraphCanvas" style="display: block; width: 100%; height: 100%; cursor: grab;"></canvas>
+                    
+                    <!-- Estadísticas en tiempo real -->
+                    <div style="position: absolute; bottom: 8px; left: 8px; background: rgba(0, 0, 0, 0.85); padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-family: monospace; border: 1px solid rgba(0, 255, 102, 0.2); pointer-events: none; color: var(--text-secondary); display: flex; gap: 8px;">
+                        <span>Hosts: <span id="graphHostsCount" style="color: var(--neon-accent); font-weight: bold;">0</span></span>
+                        <span>|</span>
+                        <span>Red: <span id="graphSubnetVal" style="color: #ff9f00;">Auto-Detect</span></span>
+                    </div>
+                    
+                    <!-- Indicador de actividad -->
+                    <div id="graphStatusIndicator" style="position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 6px; background: rgba(0, 0, 0, 0.85); padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; border: 1px solid rgba(255, 255, 255, 0.1); pointer-events: none;">
+                        <span id="graphStatusDot" style="width: 6px; height: 6px; background: #ff9f00; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px #ff9f00;"></span>
+                        <span id="graphStatusText" style="color: #ccc; font-weight: bold;">ESPERANDO</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Flujo Visual de Escaneo -->
+            <section class="panel" style="flex-grow: 1;">
+                <h2 class="panel-title" style="margin-bottom: 0.8rem;">Mapa de Flujo de Escaneo</h2>
+                <div class="timeline">
+                    <div class="timeline-item" id="step-0">
+                        <div class="timeline-dot pending"></div>
+                        <div class="timeline-content">
+                            <h3>0. Inicialización</h3>
+                            <p>Autodetección de subred local</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item" id="step-1">
+                        <div class="timeline-dot pending"></div>
+                        <div class="timeline-content">
+                            <h3>1. Descubrimiento ARP (Nmap)</h3>
+                            <p>Barrido rápido de hosts activos</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item" id="step-2">
+                        <div class="timeline-dot pending"></div>
+                        <div class="timeline-content">
+                            <h3>2. Captura de Tráfico</h3>
+                            <p>Sniffing pasivo (Tshark 30s)</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item" id="step-3">
+                        <div class="timeline-dot pending"></div>
+                        <div class="timeline-content">
+                            <h3>3. Análisis de Tráfico IA</h3>
+                            <p>Detección heurística de Ollama</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item" id="step-4">
+                        <div class="timeline-dot pending"></div>
+                        <div class="timeline-content">
+                            <h3>4. Sincronización de Firmas</h3>
+                            <p>Actualización de templates Nuclei</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item" id="step-5">
+                        <div class="timeline-dot pending"></div>
+                        <div class="timeline-content">
+                            <h3>5. Auditoría Activa de Hosts</h3>
+                            <p>Reconocimiento profundo y CVEs</p>
+                        </div>
+                    </div>
+                    <div class="timeline-item" id="step-6">
+                        <div class="timeline-dot pending"></div>
+                        <div class="timeline-content">
+                            <h3>6. Consolidación de Reporte</h3>
+                            <p>Generación de Informe Maestro</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="info-footer" style="margin-top: 1.5rem;">
+                    HADES ECOSISTEMA NATIVO DE CIBERSEGURIDAD<br>
+                    Punta Arenas, Chile - 2026
+                </div>
+            </section>
+        </div>
+
+        <!-- Panel Derecho: Consola + Paneles Inferiores -->
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <!-- Terminal -->
+            <section class="panel" style="flex-grow: 1;">
+                <div class="console-wrapper">
+                    <div class="console-header">
+                        <span>terminal@hades-surveillance:~$ logs</span>
+                        <span id="autoScanBadge" style="color: var(--neon-accent); display:none;">[AUTOSTART ACTIVO]</span>
+                    </div>
+                    <div id="consoleLog" class="console">Iniciando Ecosistema HADES Tactical Command Center...
+Esperando órdenes...</div>
+                </div>
+            </section>
+
+            <!-- Cuadro de Recursos del PC Local -->
+            <div class="mini-panel" id="resourcePanel" style="height: 220px; display: flex; flex-direction: column; margin-bottom: 0.5rem;">
+                <div class="lsw-header">
+                    <span class="lsw-title">💻 RECURSOS DEL SISTEMA LOCAL</span>
+                    <button class="lsw-close" id="resourceCloseBtn" title="Cerrar">✕</button>
+                </div>
+                <div class="ai-metrics" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; padding: 15px 16px; flex-grow: 1; align-content: center;">
+                    <div class="ai-metric-row">
+                        <div class="ai-metric-label"><span>Procesador (CPU)</span><span class="ai-metric-value" id="resCpuVal">0%</span></div>
+                        <div class="ai-bar-track"><div class="ai-bar-fill green" id="resCpuBar" style="width: 0%;"></div></div>
+                    </div>
+                    <div class="ai-metric-row">
+                        <div class="ai-metric-label"><span>Memoria RAM</span><span class="ai-metric-value" id="resRamVal">0%</span></div>
+                        <div class="ai-bar-track"><div class="ai-bar-fill cyan" id="resRamBar" style="width: 0%;"></div></div>
+                    </div>
+                    <div class="ai-metric-row">
+                        <div class="ai-metric-label"><span>Gráficos (GPU)</span><span class="ai-metric-value" id="resGpuVal">0%</span></div>
+                        <div class="ai-bar-track"><div class="ai-bar-fill purple" id="resGpuBar" style="width: 0%;"></div></div>
+                    </div>
+                    <div class="ai-metric-row">
+                        <div class="ai-metric-label"><span>Disco SSD</span><span class="ai-metric-value" id="resDiskVal">0%</span></div>
+                        <div class="ai-bar-track"><div class="ai-bar-fill amber" id="resDiskBar" style="width: 0%;"></div></div>
+                    </div>
+                </div>
+                <div class="ai-status-line" style="display: flex; justify-content: space-between; padding: 8px 16px; border-top: 1px solid rgba(0, 255, 102, 0.1); background: rgba(0, 255, 102, 0.02); flex-shrink: 0;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span class="ai-status-dot active"></span>
+                        <span>TEMP: <strong id="resTempVal" style="color: var(--neon-accent); font-family: var(--font-mono);">-- °C</strong></span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span class="ai-status-dot active" style="background: #ff9f00; box-shadow: 0 0 8px #ff9f00;"></span>
+                        <span>VENTILADOR: <strong id="resFanVal" style="color: #ff9f00; font-family: var(--font-mono);">-- RPM</strong></span>
+                    </div>
+                </div>
+            </div>
+            <!-- Fila inferior: Flujo en Vivo + Ollama IA -->
+            <div class="bottom-panels-row">
+                <!-- Flujo en Vivo -->
+                <div class="mini-panel" id="liveScanWidget">
+                    <div class="lsw-header">
+                        <span class="lsw-title">⬡ FLUJO EN VIVO</span>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <div class="lsw-indicator" id="lswIndicator"></div>
+                            <button class="lsw-close" id="lswCloseBtn" title="Cerrar">✕</button>
+                        </div>
+                    </div>
+                    <div class="lsw-body" id="lswBody"></div>
+                    <div class="lsw-footer">
+                        <span id="lswPhase">—</span>
+                        <span id="lswCount">0 eventos</span>
+                    </div>
+                </div>
+
+                <!-- Panel Ollama IA -->
+                <div class="mini-panel" id="ollamaPanel">
+                    <div class="lsw-header">
+                        <span class="lsw-title">🧠 OLLAMA IA</span>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <div class="ai-status-dot idle" id="aiStatusDot"></div>
+                            <button class="lsw-close" id="aiCloseBtn" title="Cerrar">✕</button>
+                        </div>
+                    </div>
+                    <div class="ai-metrics">
+                        <div class="ai-metric-row">
+                            <div class="ai-metric-label"><span>Carga del Modelo</span><span class="ai-metric-value" id="aiModelVal">0%</span></div>
+                            <div class="ai-bar-track"><div class="ai-bar-fill green" id="aiModelBar"></div></div>
+                        </div>
+                        <div class="ai-metric-row">
+                            <div class="ai-metric-label"><span>Tokens Procesados</span><span class="ai-metric-value" id="aiTokenVal">0 t/s</span></div>
+                            <div class="ai-bar-track"><div class="ai-bar-fill cyan" id="aiTokenBar"></div></div>
+                        </div>
+                        <div class="ai-metric-row">
+                            <div class="ai-metric-label"><span>Progreso Análisis</span><span class="ai-metric-value" id="aiProgressVal">0%</span></div>
+                            <div class="ai-bar-track"><div class="ai-bar-fill purple" id="aiProgressBar"></div></div>
+                        </div>
+                        <div class="ai-metric-row">
+                            <div class="ai-metric-label"><span>Memoria VRAM</span><span class="ai-metric-value" id="aiMemVal">— MB</span></div>
+                            <div class="ai-bar-track"><div class="ai-bar-fill amber" id="aiMemBar"></div></div>
+                        </div>
+                    </div>
+                    <div class="ai-status-line">
+                        <div class="ai-status-dot idle" id="aiStatusDot2"></div>
+                        <span id="aiStatusText">EN ESPERA</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+
+    <!-- JavaScript del Ecosistema -->
+    <script>
+        // Token de seguridad dinámico inyectado por el backend
+        const HADES_SECURITY_TOKEN = '';
+        const REAL_SURVEILLANCE_TOKEN = HADES_SECURITY_TOKEN || new URLSearchParams(window.location.search).get('token') || '';
+
+        const consoleLog = document.getElementById("consoleLog");
+        const statusDot = document.getElementById("statusDot");
+        const statusText = document.getElementById("statusText");
+        const btnScan = document.getElementById("btnScan");
+        const btnStop = document.getElementById("btnStop");
+        const targetRangeInput = document.getElementById("targetRange");
+        const durationInput = document.getElementById("duration");
+        const autoScanBadge = document.getElementById("autoScanBadge");
+        const autoOption = document.getElementById("autoOption");
+        const rangeInfo = document.getElementById("rangeInfo");
+
+        // Helper para mapear logs y actualizar el estado visual de la línea de tiempo (Timeline)
+        function updateTimelineVisuals(message) {
+            const lowerMsg = message.toLowerCase();
+            
+            // Paso 0: Inicialización
+            if (lowerMsg.includes("inicializando flujo") || lowerMsg.includes("autodetectada a través de la ip")) {
+                setStepActive(0);
+            }
+            // Paso 1: Descubrimiento ARP (Nmap)
+            else if (lowerMsg.includes("fase 1 — descubrimiento arp") || lowerMsg.includes("nmap arp discovery")) {
+                setStepCompleted(0);
+                setStepActive(1);
+            }
+            // Paso 2: Captura de tráfico
+            else if (lowerMsg.includes("fase 2 — captura de tráfico") || lowerMsg.includes("capturando en") || lowerMsg.includes("tshark captura")) {
+                setStepCompleted(1);
+                setStepActive(2);
+            }
+            // Paso 3: Análisis de Tráfico IA
+            else if (lowerMsg.includes("analizando tráfico con ia") || lowerMsg.includes("análisis ia del tráfico")) {
+                setStepCompleted(2);
+                setStepActive(3);
+            }
+            // Paso 4: Sincronización de Firmas
+            else if (lowerMsg.includes("fase 3 — actualizando templates") || lowerMsg.includes("actualizando templates de nuclei")) {
+                setStepCompleted(3);
+                setStepActive(4);
+            }
+            // Paso 5: Auditoría Activa de Hosts
+            else if (lowerMsg.includes("fase 4 — auditoría") || lowerMsg.includes("auditoria completa →") || lowerMsg.includes("nmap deep scan")) {
+                setStepCompleted(4);
+                setStepActive(5);
+            }
+            // Paso 6: Consolidación de Reporte / Fin
+            else if (lowerMsg.includes("fase 5 — informe maestro") || lowerMsg.includes("auditoria completada con exito") || lowerMsg.includes("vigilancia completada")) {
+                setStepCompleted(5);
+                setStepCompleted(6);
+            }
+            
+            // Si el estado pasa a IDLE desde RUNNING en general
+            if (lowerMsg.includes("agente finalizado") || lowerMsg.includes("parada forzada ejecutado")) {
+                resetTimelineToIdle();
+            }
+        }
+
+        function setStepActive(stepNum) {
+            // Desactivar otros activos
+            document.querySelectorAll(".timeline-item").forEach(item => {
+                item.classList.remove("active");
+            });
+            const activeItem = document.getElementById(`step-${stepNum}`);
+            if (activeItem) {
+                activeItem.classList.add("active");
+                const dot = activeItem.querySelector(".timeline-dot");
+                if (dot) dot.className = "timeline-dot active";
+            }
+        }
+
+        function setStepCompleted(stepNum) {
+            for (let i = 0; i <= stepNum; i++) {
+                const item = document.getElementById(`step-${i}`);
+                if (item) {
+                    item.classList.add("completed");
+                    const dot = item.querySelector(".timeline-dot");
+                    if (dot) dot.className = "timeline-dot completed";
+                }
+            }
+        }
+
+        function resetTimelineToIdle() {
+            document.querySelectorAll(".timeline-item").forEach(item => {
+                item.classList.remove("active");
+                // Si ya fue completado, conservarlo
+            });
+        }
+
+        // ── LIVE SCAN WIDGET ─────────────────────────────────────────
+        const liveScanWidget = document.getElementById('liveScanWidget');
+        const lswBody        = document.getElementById('lswBody');
+        const lswPhase       = document.getElementById('lswPhase');
+        const lswCount       = document.getElementById('lswCount');
+        let lswEventCount    = 0;
+        const LSW_MAX_LINES  = 6;
+
+        // Categoriza un mensaje y devuelve { icon, cssClass }
+        function classifyLine(msg) {
+            const m = msg.toLowerCase();
+            if (m.includes('[error') || m.includes('fallo') || m.includes('error'))  return { icon: '✖', cls: 'alert'  };
+            if (m.includes('[warn') || m.includes('advertencia'))                     return { icon: '⚠', cls: 'warn'   };
+            if (m.includes('[ok]') || m.includes('completad') || m.includes('éxito')) return { icon: '✔', cls: 'accent' };
+            if (m.includes('>>>')  || m.includes('iniciando') || m.includes('fase'))  return { icon: '▶', cls: 'accent' };
+            if (m.includes('agente finalizado') || m.includes('detenid'))             return { icon: '■', cls: 'warn'   };
+            return { icon: '·', cls: '' };
+        }
+
+        function pushLswLine(message) {
+            lswEventCount++;
+            lswCount.textContent = `${lswEventCount} evento${lswEventCount !== 1 ? 's' : ''}`;
+
+            const { icon, cls } = classifyLine(message);
+
+            // Truncar el texto si es muy largo
+            const short = message.length > 46 ? message.slice(0, 44) + '…' : message;
+
+            const line = document.createElement('div');
+            line.className = 'lsw-line';
+            line.innerHTML = `<span class="lsw-icon">${icon}</span><span class="lsw-text ${cls}">${short}</span>`;
+
+            lswBody.appendChild(line);
+
+            // Mantener máximo LSW_MAX_LINES líneas visibles
+            while (lswBody.children.length > LSW_MAX_LINES) {
+                lswBody.removeChild(lswBody.firstChild);
+            }
+        }
+
+        // Detecta la fase actual y actualiza el footer del widget
+        function updateLswPhase(msg) {
+            const m = msg.toLowerCase();
+            if      (m.includes('inicializ'))                      lswPhase.textContent = 'FASE 0 — INIT';
+            else if (m.includes('descubrimiento arp') || m.includes('nmap arp')) lswPhase.textContent = 'FASE 1 — ARP SCAN';
+            else if (m.includes('captura de tráfico') || m.includes('tshark')) lswPhase.textContent = 'FASE 2 — TRÁFICO';
+            else if (m.includes('análisis ia') || m.includes('ollama'))          lswPhase.textContent = 'FASE 3 — IA';
+            else if (m.includes('templates') || m.includes('nuclei'))            lswPhase.textContent = 'FASE 4 — FIRMAS';
+            else if (m.includes('auditoría') || m.includes('deep scan'))         lswPhase.textContent = 'FASE 5 — AUDITORÍA';
+            else if (m.includes('informe') || m.includes('report'))              lswPhase.textContent = 'FASE 6 — REPORTE';
+        }
+
+        let lswManualClose = false;
+
+        function showLsw()  {
+            if (!lswManualClose) liveScanWidget.classList.remove('hidden');
+        }
+        function hideLsw()  { liveScanWidget.classList.add('hidden'); }
+        function resetLsw() {
+            lswBody.innerHTML = '';
+            lswEventCount = 0;
+            lswCount.textContent = '0 eventos';
+            lswPhase.textContent = '—';
+            lswManualClose = false;
+        }
+
+        // Botón cerrar Flujo en Vivo
+        document.getElementById('lswCloseBtn').addEventListener('click', () => {
+            lswManualClose = true;
+            hideLsw();
+        });
+
+        // ── OLLAMA IA METRICS ────────────────────────────────────────
+        const ollamaPanel    = document.getElementById('ollamaPanel');
+        const aiModelBar     = document.getElementById('aiModelBar');
+        const aiTokenBar     = document.getElementById('aiTokenBar');
+        const aiProgressBar  = document.getElementById('aiProgressBar');
+        const aiMemBar       = document.getElementById('aiMemBar');
+        const aiModelVal     = document.getElementById('aiModelVal');
+        const aiTokenVal     = document.getElementById('aiTokenVal');
+        const aiProgressVal  = document.getElementById('aiProgressVal');
+        const aiMemVal       = document.getElementById('aiMemVal');
+        const aiStatusDot    = document.getElementById('aiStatusDot');
+        const aiStatusDot2   = document.getElementById('aiStatusDot2');
+        const aiStatusText   = document.getElementById('aiStatusText');
+        let aiAnimInterval   = null;
+        let aiManualClose    = false;
+
+        function activateAiPanel() {
+            if (aiManualClose) return;
+            ollamaPanel.classList.remove('hidden');
+            aiStatusDot.className  = 'ai-status-dot active';
+            aiStatusDot2.className = 'ai-status-dot active';
+            aiStatusText.textContent = 'ANALIZANDO...';
+            aiStatusText.style.color = 'var(--neon-accent)';
+            [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.add('active'));
+
+            // Simular progreso de métricas durante el análisis
+            let progress = 0;
+            if (aiAnimInterval) clearInterval(aiAnimInterval);
+            // Iniciar modelo de carga
+            aiModelBar.style.width = '100%';
+            aiModelVal.textContent = '100%';
+            // Iniciar memoria
+            const memMB = Math.floor(Math.random() * 800 + 1400);
+            aiMemBar.style.width = Math.min(memMB / 40, 100) + '%';
+            aiMemVal.textContent = memMB + ' MB';
+
+            aiAnimInterval = setInterval(() => {
+                progress = Math.min(progress + Math.random() * 6 + 1, 98); // Topar en 98% hasta recibir log de completado
+                const p = Math.round(progress);
+                aiProgressBar.style.width = p + '%';
+                aiProgressVal.textContent = p + '%';
+                const tps = Math.floor(Math.random() * 30 + 15);
+                aiTokenBar.style.width = Math.min(tps * 2, 100) + '%';
+                aiTokenVal.textContent = tps + ' t/s';
+            }, 600);
+        }
+
+        function completeAiPanel() {
+            if (aiAnimInterval) {
+                clearInterval(aiAnimInterval);
+                aiAnimInterval = null;
+            }
+            
+            // Mostrar 100% y COMPLETADO brevemente
+            aiProgressBar.style.width = '100%';
+            aiProgressVal.textContent = '100%';
+            aiStatusDot.className  = 'ai-status-dot idle';
+            aiStatusDot2.className = 'ai-status-dot idle';
+            aiStatusText.textContent = 'COMPLETADO';
+            aiStatusText.style.color = '#ff9f00';
+            [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.remove('active'));
+            
+            // Regresar barras a cero tras 1.5s
+            setTimeout(() => {
+                if (!aiAnimInterval) {
+                    aiModelBar.style.width = '0%';
+                    aiModelVal.textContent = '0%';
+                    aiTokenBar.style.width = '0%';
+                    aiTokenVal.textContent = '0 t/s';
+                    aiProgressBar.style.width = '0%';
+                    aiProgressVal.textContent = '0%';
+                    aiMemBar.style.width = '0%';
+                    aiMemVal.textContent = '— MB';
+                    aiStatusText.textContent = 'EN ESPERA / INACTIVO';
+                    aiStatusText.style.color = '';
+                }
+            }, 1500);
+        }
+
+        function resetAiPanel() {
+            if (aiAnimInterval) { clearInterval(aiAnimInterval); aiAnimInterval = null; }
+            aiModelBar.style.width = '0%';    aiModelVal.textContent = '0%';
+            aiTokenBar.style.width = '0%';    aiTokenVal.textContent = '0 t/s';
+            aiProgressBar.style.width = '0%'; aiProgressVal.textContent = '0%';
+            aiMemBar.style.width = '0%';      aiMemVal.textContent = '— MB';
+            aiStatusDot.className  = 'ai-status-dot idle';
+            aiStatusDot2.className = 'ai-status-dot idle';
+            aiStatusText.textContent = 'EN ESPERA';
+            aiStatusText.style.color = '';
+            [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.remove('active'));
+            aiManualClose = false;
+        }
+
+        // Botón cerrar Ollama IA
+        document.getElementById('aiCloseBtn').addEventListener('click', () => {
+            aiManualClose = true;
+            ollamaPanel.classList.add('hidden');
+        });
+
+        // Detectar fase IA desde logs
+        function checkAiPhaseFromLog(msg) {
+            const m = msg.toLowerCase();
+            if (m.includes('análisis ia') || m.includes('analizando tráfico con ia') || m.includes('ollama')) {
+                activateAiPanel();
+            } else if (m.includes('actualizando templates') || m.includes('nuclei') || m.includes('fase 3') || m.includes('fase 4') || m.includes('finalizado') || m.includes('completada con exito')) {
+                completeAiPanel();
+            }
+        }
+        // ── FIN OLLAMA IA METRICS ─────────────────────────────────────
+
+        // ── RECURSOS DEL SISTEMA LOCAL ─────────────────────────────────
+        const resourcePanel = document.getElementById('resourcePanel');
+        const resCpuBar = document.getElementById('resCpuBar');
+        const resCpuVal = document.getElementById('resCpuVal');
+        const resRamBar = document.getElementById('resRamBar');
+        const resRamVal = document.getElementById('resRamVal');
+        const resGpuBar = document.getElementById('resGpuBar');
+        const resGpuVal = document.getElementById('resGpuVal');
+        const resDiskBar = document.getElementById('resDiskBar');
+        const resDiskVal = document.getElementById('resDiskVal');
+        const resTempVal = document.getElementById('resTempVal');
+        const resFanVal = document.getElementById('resFanVal');
+
+        async function fetchSystemResources() {
+            try {
+                const res = await fetch(`/api/sysinfo?token=${REAL_SURVEILLANCE_TOKEN}`);
+                if (!res.ok) return;
+                const data = await res.json();
+                
+                // Actualizar barras
+                resCpuBar.style.width = data.cpu + '%';
+                resCpuVal.textContent = data.cpu + '%';
+                
+                resRamBar.style.width = data.ram + '%';
+                resRamVal.textContent = data.ram + '%';
+                
+                resGpuBar.style.width = data.gpu + '%';
+                resGpuVal.textContent = data.gpu + '%';
+                
+                resDiskBar.style.width = data.disk + '%';
+                resDiskVal.textContent = data.disk + '%';
+                
+                resTempVal.textContent = data.temp + ' °C';
+                resFanVal.textContent = Math.round(data.fan) + ' RPM';
+            } catch (err) {
+                console.error("Error consultando recursos del sistema:", err);
+            }
+        }
+
+        // Botón cerrar Recursos del PC
+        document.getElementById('resourceCloseBtn').addEventListener('click', () => {
+            resourcePanel.classList.add('hidden');
+        });
+
+        // Polling de recursos cada 2.5 segundos
+        setInterval(fetchSystemResources, 2500);
+        // Carga inicial inmediata de recursos
+        setTimeout(fetchSystemResources, 500);
+        // ── FIN RECURSOS DEL SISTEMA ─────────────────────────────────
+
+        // Helper para agregar texto a la terminal
+        function logToConsole(message) {
+            consoleLog.innerHTML += "\n" + message;
+            consoleLog.scrollTop = consoleLog.scrollHeight;
+            updateTimelineVisuals(message);
+            // Alimentar widget de flujo en vivo y métricas IA
+            pushLswLine(message);
+            updateLswPhase(message);
+            checkAiPhaseFromLog(message);
+
+            // Alimentar el Mapa de Red Obsidian en tiempo real
+            if (window.networkGraph) {
+                window.networkGraph.parseLogLine(message);
+            }
+        }
+
+        // Consultar el estado del agente y logs del backend
+        async function fetchStatus() {
+            try {
+                const res = await fetch(`/api/status?token=${REAL_SURVEILLANCE_TOKEN}`);
+                const data = await res.json();
+                const isRunning = data.status === "running";
+                
+                if (isRunning) {
+                    statusDot.className = "status-dot running";
+                    statusText.innerText = "RUNNING";
+                    statusText.style.color = "var(--neon-accent)";
+                    btnScan.disabled = true;
+                } else {
+                    statusDot.className = "status-dot idle";
+                    statusText.innerText = "IDLE";
+                    statusText.style.color = "#ff9f00";
+                    btnScan.disabled = false;
+                }
+                // Sincronizar el pulso rojo del botón de emergencia
+                syncStopButtonState(isRunning);
+            } catch (err) {
+                console.error("Error consultando estado del servidor:", err);
+            }
+        }
+
+        async function fetchLogs() {
+            try {
+                const res = await fetch(`/api/logs?token=${REAL_SURVEILLANCE_TOKEN}`);
+                const data = await res.json();
+                if (data.logs && data.logs.length > 0) {
+                    data.logs.forEach(log => {
+                        logToConsole(log);
+                    });
+                }
+            } catch (err) {
+                console.error("Error consultando logs:", err);
+            }
+        }
+
+        // Lanzar Vigilancia del Agente
+        async function startScan() {
+            // Resetear todos los pasos a pending al iniciar un nuevo escaneo
+            document.querySelectorAll(".timeline-item").forEach(item => {
+                item.className = "timeline-item";
+                const dot = item.querySelector(".timeline-dot");
+                if (dot) dot.className = "timeline-dot pending";
+            });
+            // Resetear paneles inferiores
+            resetLsw();
+            showLsw();
+            resetAiPanel();
+            resourcePanel.classList.remove('hidden');
+            // Limpiar y resetear Mapa de Red Obsidian para el nuevo escaneo
+            if (window.networkGraph) {
+                window.networkGraph.clear();
+                window.networkGraph.setActivityState("ACTIVO", "#00ff66");
+            }
+
+            // Determinar objetivo basado en modo de escaneo
+            let target = '';
+            const mode = autoOption.value;
+            if (mode === 'auto' || mode === 'full') {
+                target = 'auto';
+            } else {
+                target = targetRangeInput.value.trim();
+            }
+            const duration = parseInt(durationInput.value) || 30;
+
+            logToConsole(`>>> Enviando petición de escaneo. Modo: ${mode} | Objetivo: ${target || 'auto-detect'} | Captura: ${duration}s...`);
+
+            try {
+                const res = await fetch(`/api/scan?token=${REAL_SURVEILLANCE_TOKEN}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Hades-Token": REAL_SURVEILLANCE_TOKEN
+                    },
+                    body: JSON.stringify({ target, duration })
+                });
+                
+                const data = await res.json();
+                if (res.ok) {
+                    logToConsole(`>>> ${data.message}`);
+                } else {
+                    logToConsole(`[ERROR] >>> ${data.error}`);
+                }
+            } catch (err) {
+                logToConsole(`[ERROR DE CONEXION] >>> No se pudo conectar con el backend de HADES.`);
+            }
+        }
+
+        // Detener Ecosistema por Fuerza Bruta — TERMINACIÓN INMEDIATA
+        async function stopEcosystem() {
+            // Feedback visual INMEDIATO antes de esperar respuesta del servidor
+            btnStop.disabled = true;
+            btnStop.classList.remove('emergency-active');
+            btnStop.classList.add('terminating');
+            const spinner = btnStop.querySelector('.stop-spinner');
+            const stopIcon = document.getElementById('stopIcon');
+            const stopText = document.getElementById('stopBtnText');
+            if (spinner) spinner.style.display = 'inline-block';
+            if (stopIcon) stopIcon.style.display = 'none';
+            if (stopText) stopText.textContent = ' TERMINANDO...';
+
+            // Flash rojo en la consola de inmediato
+            logToConsole("⚡ [EMERGENCIA] PARADA DE EMERGENCIA ACTIVADA — Terminando todos los procesos del agente...");
+
+            try {
+                const res = await fetch(`/api/stop?token=${REAL_SURVEILLANCE_TOKEN}`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Hades-Token": REAL_SURVEILLANCE_TOKEN
+                    }
+                });
+                const data = await res.json();
+                logToConsole(`⚡ ${data.message}`);
+
+                // Flash verde de confirmación
+                btnStop.classList.remove('terminating');
+                btnStop.classList.add('stop-confirmed');
+                if (spinner) spinner.style.display = 'none';
+                if (stopIcon) stopIcon.style.display = 'inline';
+                if (stopText) stopText.textContent = '✅ Detenido';
+
+                // Restaurar botón tras 2.5 segundos
+                setTimeout(() => {
+                    btnStop.classList.remove('stop-confirmed');
+                    btnStop.disabled = false;
+                    if (stopText) stopText.textContent = '⚡ Parada de Emergencia';
+                    hideLsw();
+                }, 2500);
+
+            } catch (err) {
+                logToConsole(`[ERROR] ⚡ Fallo al enviar comando de parada al servidor.`);
+                btnStop.classList.remove('terminating');
+                btnStop.disabled = false;
+                if (spinner) spinner.style.display = 'none';
+                if (stopIcon) stopIcon.style.display = 'inline';
+                if (stopText) stopText.textContent = '⚡ Parada de Emergencia';
+            }
+        }
+
+        btnScan.addEventListener("click", startScan);
+        btnStop.addEventListener("click", stopEcosystem);
+
+        // Activar/desactivar pulso rojo en el botón según el estado del agente
+        function syncStopButtonState(isRunning) {
+            if (isRunning) {
+                btnStop.classList.add('emergency-active');
+            } else {
+                btnStop.classList.remove('emergency-active');
+            }
+        }
+
+        // Cambiar visibilidad del campo de rango manual según opción seleccionada
+        function updateModeVisibility() {
+            if (autoOption.value === 'auto' || autoOption.value === 'full' || autoOption.value === 'quick') {
+                targetRangeInput.parentElement.style.display = 'none';
+                rangeInfo.textContent = '';
+            } else {
+                targetRangeInput.parentElement.style.display = 'block';
+            }
+        }
+        // Evento al cambiar opción
+        autoOption.addEventListener('change', () => {
+            updateModeVisibility();
+        });
+        // Calcular y mostrar número de IPs al ingresar rango manual
+        targetRangeInput.addEventListener('input', () => {
+            const val = targetRangeInput.value.trim();
+            const count = calculateIpCount(val);
+            if (count > 0) {
+                rangeInfo.textContent = `${count} IPs totales`;
+            } else {
+                rangeInfo.textContent = '';
+            }
+        });
+        // Función sencilla de cálculo de IPs a partir de CIDR (solo una zona);
+        function calculateIpCount(cidr) {
+            // Extraer prefijo después de '/'
+            const match = cidr.match(/\/(\d{1,2})$/);
+            if (!match) return 0;
+            const prefix = parseInt(match[1]);
+            if (prefix < 0 || prefix > 32) return 0;
+            const hosts = Math.pow(2, 32 - prefix) - 2;
+            return hosts > 0 ? hosts : 0;
+        }
+        // Inicializar visibilidad al cargar
+        updateModeVisibility();
+
+        // Polling constante para mantener la interfaz actualizada en tiempo real
+        setInterval(fetchStatus, 1500);
+        setInterval(fetchLogs, 1000);
+
+        // --- INICIO AUTOMÁTICO AL ABRIR LA PÁGINA ---
+        window.addEventListener("load", () => {
+            // Inicializar el grafo interactivo de red Obsidian
+            window.networkGraph = new ObsidianNetworkGraph('networkGraphCanvas');
+            window.networkGraph.init();
+
+            logToConsole(">>> Inicializando flujo auto-ejecutable...");
+            autoScanBadge.style.display = "inline-block";
+            
+            // Retardo inicial de 2 segundos para dar tiempo al usuario a ver el Dashboard y conectar las APIs
+            setTimeout(() => {
+                logToConsole(">>> [AUTOSTART] Iniciando escaneo automatico predeterminado...");
+                startScan();
+            }, 2000);
+        });
+
+        // ── MOTOR DEL MAPA DE RED INTERACTIVO ESTILO OBSIDIAN ────────────────
+        class ObsidianNetworkGraph {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                if (!this.canvas) return;
+                this.ctx = this.canvas.getContext('2d');
+                
+                this.nodes = {}; // Diccionario de nodos indexados por IP
+                this.connections = []; // Array de enlaces
+                this.particles = []; // Partículas de flujo continuo de datos
+                
+                // Parámetros de vista (Zoom & Pan)
+                this.panX = 0;
+                this.panY = 0;
+                this.zoom = 1.0;
+                
+                // Interacción de arrastre
+                this.draggedNode = null;
+                this.isPanning = false;
+                this.lastMouseX = 0;
+                this.lastMouseY = 0;
+                
+                // Parámetros físicos (Force-Directed Graph)
+                this.kCoulomb = 1500; // Repulsión entre nodos
+                this.kHooke = 0.05;   // Fuerza de atracción del resorte
+                this.lengthHooke = 120; // Longitud del resorte ideal
+                this.gravity = 0.015;  // Gravedad central sutil
+                this.damping = 0.82;   // Fricción para estabilidad
+                
+                // Elementos del DOM vinculados
+                this.hostsCountEl = document.getElementById('graphHostsCount');
+                this.subnetEl = document.getElementById('graphSubnetVal');
+                this.statusDotEl = document.getElementById('graphStatusDot');
+                this.statusTextEl = document.getElementById('graphStatusText');
+                
+                this.detectedSubnet = "Auto-Detect";
+                this.isInitialized = false;
+            }
+            
+            init() {
+                if (!this.canvas) return;
+                this.resizeCanvas();
+                this.resetView();
+                
+                // Configurar el Router Central (el centro neurálgico)
+                this.addNode("Router", {
+                    isRouter: true,
+                    label: "ROUTER",
+                    color: "#00ff66",
+                    radius: 18
+                });
+                
+                // Registrar manejadores de eventos
+                window.addEventListener('resize', () => this.resizeCanvas());
+                
+                // Eventos del Mouse
+                this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+                this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+                window.addEventListener('mouseup', () => this.handleMouseUp());
+                this.canvas.addEventListener('wheel', (e) => this.handleWheel(e), { passive: false });
+                
+                // Registrar botones de controles de cabecera
+                document.getElementById('btnResetGraph').addEventListener('click', () => this.resetView());
+                document.getElementById('btnClearGraph').addEventListener('click', () => this.clear());
+                
+                // Bucle de Animación
+                this.isInitialized = true;
+                this.animate();
+            }
+            
+            resizeCanvas() {
+                const rect = this.canvas.parentElement.getBoundingClientRect();
+                this.canvas.width = rect.width;
+                this.canvas.height = rect.height;
+            }
+            
+            resetView() {
+                this.zoom = 1.0;
+                this.panX = this.canvas.width / 2;
+                this.panY = this.canvas.height / 2;
+                
+                // Posicionar el Router en el centro geométrico absoluto
+                if (this.nodes["Router"]) {
+                    this.nodes["Router"].x = 0;
+                    this.nodes["Router"].y = 0;
+                    this.nodes["Router"].vx = 0;
+                    this.nodes["Router"].vy = 0;
+                }
+            }
+            
+            clear() {
+                // Borrar todo menos el Router
+                const router = this.nodes["Router"];
+                this.nodes = { "Router": router };
+                this.connections = [];
+                this.particles = [];
+                this.updateStats();
+            }
+            
+            updateStats() {
+                const count = Object.keys(this.nodes).length - 1; // Excluir Router
+                if (this.hostsCountEl) this.hostsCountEl.textContent = count;
+                if (this.subnetEl) this.subnetEl.textContent = this.detectedSubnet;
+            }
+            
+            addNode(ip, options = {}) {
+                if (this.nodes[ip]) {
+                    // Actualizar nodo existente si aplica
+                    if (options.color) this.nodes[ip].color = options.color;
+                    return;
+                }
+                
+                // Posición inicial: si es Router en (0,0), si no, un spawn circular aleatorio
+                let x = 0;
+                let y = 0;
+                if (!options.isRouter) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const r = 50 + Math.random() * 50;
+                    x = Math.cos(angle) * r;
+                    y = Math.sin(angle) * r;
+                }
+                
+                this.nodes[ip] = {
+                    ip: ip,
+                    x: x,
+                    y: y,
+                    vx: 0,
+                    vy: 0,
+                    radius: 0, // Iniciar en 0 para animación spawn
+                    targetRadius: options.radius || 10,
+                    isRouter: !!options.isRouter,
+                    label: options.label || ip,
+                    color: options.color || "#00e5ff", // Por defecto cian brillante
+                    pulse: 0,
+                    pulseSpeed: 0.05 + Math.random() * 0.05
+                };
+                
+                // Conectar con el Router si no es el Router
+                if (!options.isRouter) {
+                    this.connections.push({
+                        from: "Router",
+                        to: ip,
+                        color: options.connectionColor || "rgba(0, 255, 102, 0.25)"
+                    });
+                }
+                
+                this.updateStats();
+            }
+            
+            // Buscar IPs en logs
+            parseLogLine(line) {
+                const cleanLine = line.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, ''); // Remover secuencias ANSI
+                const ipRegex = /\b((?:[0-9]{1,3}\.){3}[0-9]{1,3})\b/g;
+                const lowerLine = cleanLine.toLowerCase();
+
+                // ── 1. Detectar subred / IP del Router ─────────────────────────────
+                const subnetMatch =
+                    cleanLine.match(/Nmap ARP discovery[\s\S]*?→\s*([0-9][0-9./]+)/) ||
+                    cleanLine.match(/[Rr]ango de red a escanear:\s*([0-9][0-9./]+)/) ||
+                    cleanLine.match(/[Oo]bjetivo:\s*([0-9][0-9./]+)/) ||
+                    cleanLine.match(/[Aa]utodetectada.*?:\s*([0-9][0-9./]+)/) ||
+                    cleanLine.match(/[Ss]ubred[:\s]+([0-9][0-9./]+)/);
+                if (subnetMatch) {
+                    const subnet = subnetMatch[1].trim();
+                    if (subnet !== "auto-detect" && subnet !== "auto" && subnet.length > 4) {
+                        this.detectedSubnet = subnet;
+                        if (this.nodes["Router"]) {
+                            this.nodes["Router"].label = `ROUTER\n${subnet}`;
+                        }
+                        this.updateStats();
+                    }
+                }
+
+                // ── 2. Actividad por host LAN → [192.168.1.x]: ... ─────────────────
+                // Patrón REAL del agente: "[192.168.1.84]: sin tráfico capturado en este periodo"
+                const hostActivityMatch = cleanLine.match(/\[([0-9]{1,3}(?:\.[0-9]{1,3}){3})\]\s*:/);
+                if (hostActivityMatch) {
+                    const ip = hostActivityMatch[1];
+                    const isRouter = lowerLine.includes('router') ||
+                        (this.nodes['Router'] && this.nodes['Router'].label.includes(ip));
+                    if (!isRouter && ip !== '127.0.0.1' && ip !== '0.0.0.0') {
+                        // Si la IP no existe aún, es descubierta ahora → agregarla
+                        const alreadyExists = !!this.nodes[ip];
+                        this.addNode(ip, { color: '#00ff66', radius: 9 });
+                        if (!alreadyExists) {
+                            this.setActivityState('ESCANEANDO', '#00ff66');
+                            // Flash de partícula router → host
+                            this.triggerDataFlash(ip, 'to');
+                        }
+                        // Partícula host → router (tráfico de respuesta)
+                        if (Math.random() < 0.5) this.triggerDataFlash(ip, 'from');
+                    }
+                }
+
+                // ── 3. Encabezado de sección de hosts LAN detectados ────────────────
+                if (lowerLine.includes('actividad por host lan') ||
+                    lowerLine.includes('host lan detectado') ||
+                    lowerLine.includes('dispositivos detectados') ||
+                    lowerLine.includes('nmap arp discovery')) {
+                    this.setActivityState('DETECTANDO', '#00ff66');
+                    // Extraer IPs inline (ej: "Dispositivos detectados: ['192.168.1.1', ...]")
+                    let m;
+                    ipRegex.lastIndex = 0;
+                    while ((m = ipRegex.exec(cleanLine)) !== null) {
+                        const ip = m[1];
+                        if (ip !== '127.0.0.1' && ip !== '0.0.0.0') {
+                            this.addNode(ip, { color: '#00ff66', radius: 9 });
+                            this.triggerDataFlash(ip, 'to');
+                        }
+                    }
+                }
+
+                // ── 4. Nmap scan report for <IP> ────────────────────────────────────
+                if (cleanLine.includes('Nmap scan report for') || cleanLine.includes('report for')) {
+                    ipRegex.lastIndex = 0;
+                    let m;
+                    while ((m = ipRegex.exec(cleanLine)) !== null) {
+                        const ip = m[1];
+                        if (ip !== '127.0.0.1' && ip !== '0.0.0.0') {
+                            this.addNode(ip, { color: '#00ff66', radius: 8 });
+                            this.triggerDataFlash(ip, 'to');
+                        }
+                    }
+                }
+
+                // ── 5. Auditoría profunda / Deep scan → amarillo ────────────────────
+                if (cleanLine.includes('deep scan →') || cleanLine.includes('auditing host') ||
+                    lowerLine.includes('auditoría') || lowerLine.includes('auditoria')) {
+                    ipRegex.lastIndex = 0;
+                    let m;
+                    while ((m = ipRegex.exec(cleanLine)) !== null) {
+                        const ip = m[1];
+                        if (ip !== '127.0.0.1' && ip !== '0.0.0.0' && this.nodes[ip]) {
+                            this.nodes[ip].color = '#ffc107'; // Amarillo: En análisis
+                        }
+                    }
+                    this.setActivityState('ANALIZANDO', '#ff9f00');
+                }
+
+                // ── 6. Vulnerabilidades críticas → rojo ─────────────────────────────
+                if (lowerLine.includes('vuln') || lowerLine.includes('critical') ||
+                    lowerLine.includes('high') || lowerLine.includes('cve-')) {
+                    ipRegex.lastIndex = 0;
+                    let m;
+                    while ((m = ipRegex.exec(cleanLine)) !== null) {
+                        const ip = m[1];
+                        if (ip !== '127.0.0.1' && ip !== '0.0.0.0' && this.nodes[ip]) {
+                            this.nodes[ip].color = '#ff0055';
+                        }
+                    }
+                    this.setActivityState('⚠ VULN DETECTADA', '#ff0055');
+                }
+
+                // ── 7. Tráfico capturado (tshark) → animación bidireccional ─────────
+                if (lowerLine.includes('capturando') || lowerLine.includes('tshark') ||
+                    lowerLine.includes('paquetes') || lowerLine.includes('tráfico')) {
+                    // Animar todos los hosts conocidos con actividad de tráfico
+                    const hostIds = Object.keys(this.nodes).filter(k => k !== 'Router');
+                    if (hostIds.length > 0 && Math.random() < 0.6) {
+                        const randomHost = hostIds[Math.floor(Math.random() * hostIds.length)];
+                        this.triggerDataFlash(randomHost, Math.random() < 0.5 ? 'to' : 'from');
+                    }
+                }
+
+                // ── 8. Parada / Finalización ────────────────────────────────────────
+                if (lowerLine.includes('agente finalizado') || lowerLine.includes('detenid') ||
+                    lowerLine.includes('parada de emergencia') || lowerLine.includes('vigilancia completada')) {
+                    this.setActivityState('DETENIDO', '#9c9c9c');
+                }
+            }
+            
+            setActivityState(text, color) {
+                if (this.statusDotEl && this.statusTextEl) {
+                    this.statusTextEl.textContent = text;
+                    this.statusTextEl.style.color = color;
+                    this.statusDotEl.style.backgroundColor = color;
+                    this.statusDotEl.style.boxShadow = `0 0 8px ${color}`;
+                }
+            }
+            
+            triggerDataFlash(targetIp, direction = 'to') {
+                // Dispara partícula de flujo de datos — dirección: 'to' = Router→Host, 'from' = Host→Router
+                const isToHost = direction === 'to';
+                this.particles.push({
+                    from: isToHost ? 'Router' : targetIp,
+                    to:   isToHost ? targetIp : 'Router',
+                    progress: 0,
+                    speed: 0.012 + Math.random() * 0.018,
+                    size: isToHost ? (3 + Math.random() * 2) : (2 + Math.random() * 1.5),
+                    color: isToHost ? '#00ff66' : '#00cfff'  // Verde = hacia host, Cian = respuesta
+                });
+            }
+            
+            // --- GESTIÓN DE EVENTOS MOUSE (Arrastre & Zoom) ---
+            getMousePos(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                return {
+                    x: (e.clientX - rect.left - this.panX) / this.zoom,
+                    y: (e.clientY - rect.top - this.panY) / this.zoom
+                };
+            }
+            
+            handleMouseDown(e) {
+                const pos = this.getMousePos(e);
+                
+                // Detectar si hizo clic en un nodo
+                let clickedNode = null;
+                for (const id in this.nodes) {
+                    const node = this.nodes[id];
+                    const dist = Math.hypot(node.x - pos.x, node.y - pos.y);
+                    if (dist < (node.radius + 8)) {
+                        clickedNode = node;
+                        break;
+                    }
+                }
+                
+                if (clickedNode) {
+                    this.draggedNode = clickedNode;
+                    this.canvas.style.cursor = 'grabbing';
+                } else {
+                    this.isPanning = true;
+                    this.lastMouseX = e.clientX;
+                    this.lastMouseY = e.clientY;
+                    this.canvas.style.cursor = 'move';
+                }
+            }
+            
+            handleMouseMove(e) {
+                const pos = this.getMousePos(e);
+                
+                if (this.draggedNode) {
+                    this.draggedNode.x = pos.x;
+                    this.draggedNode.y = pos.y;
+                    this.draggedNode.vx = 0;
+                    this.draggedNode.vy = 0;
+                } else if (this.isPanning) {
+                    const dx = e.clientX - this.lastMouseX;
+                    const dy = e.clientY - this.lastMouseY;
+                    this.panX += dx;
+                    this.panY += dy;
+                    this.lastMouseX = e.clientX;
+                    this.lastMouseY = e.clientY;
+                } else {
+                    // Hover effect en nodos
+                    let hover = false;
+                    for (const id in this.nodes) {
+                        const node = this.nodes[id];
+                        const dist = Math.hypot(node.x - pos.x, node.y - pos.y);
+                        if (dist < (node.radius + 8)) {
+                            hover = true;
+                            break;
+                        }
+                    }
+                    this.canvas.style.cursor = hover ? 'pointer' : 'grab';
+                }
+            }
+            
+            handleMouseUp() {
+                this.draggedNode = null;
+                this.isPanning = false;
+                if (this.canvas) this.canvas.style.cursor = 'grab';
+            }
+            
+            handleWheel(e) {
+                e.preventDefault();
+                const zoomFactor = 1.1;
+                const rect = this.canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Zoom respecto a la posición del mouse
+                const beforeZoomX = (mouseX - this.panX) / this.zoom;
+                const beforeZoomY = (mouseY - this.panY) / this.zoom;
+                
+                if (e.deltaY < 0) {
+                    this.zoom = Math.min(this.zoom * zoomFactor, 3.0);
+                } else {
+                    this.zoom = Math.max(this.zoom / zoomFactor, 0.4);
+                }
+                
+                this.panX = mouseX - beforeZoomX * this.zoom;
+                this.panY = mouseY - beforeZoomY * this.zoom;
+            }
+            
+            // --- MOTOR FÍSICO INTERNO (Force-Directed Simulation) ---
+            updatePhysics() {
+                const nodeIds = Object.keys(this.nodes);
+                
+                // 1. Repulsión de Coulomb entre todos los nodos
+                for (let i = 0; i < nodeIds.length; i++) {
+                    const nodeA = this.nodes[nodeIds[i]];
+                    for (let j = i + 1; j < nodeIds.length; j++) {
+                        const nodeB = this.nodes[nodeIds[j]];
+                        
+                        const dx = nodeB.x - nodeA.x;
+                        const dy = nodeB.y - nodeA.y;
+                        const dist = Math.hypot(dx, dy) || 1.0;
+                        
+                        // Solo repeler si están a menos de 300px
+                        if (dist < 300) {
+                            const force = this.kCoulomb / (dist * dist);
+                            const fx = (dx / dist) * force;
+                            const fy = (dy / dist) * force;
+                            
+                            // Restar fuerza a nodeA, sumar a nodeB
+                            if (nodeA !== this.draggedNode && !nodeA.isRouter) {
+                                nodeA.vx -= fx;
+                                nodeA.vy -= fy;
+                            }
+                            if (nodeB !== this.draggedNode && !nodeB.isRouter) {
+                                nodeB.vx += fx;
+                                nodeB.vy += fy;
+                            }
+                        }
+                    }
+                }
+                
+                // 2. Atracción de Hooke (Fuerza de resorte) para enlaces
+                this.connections.forEach(conn => {
+                    const nodeA = this.nodes[conn.from];
+                    const nodeB = this.nodes[conn.to];
+                    if (!nodeA || !nodeB) return;
+                    
+                    const dx = nodeB.x - nodeA.x;
+                    const dy = nodeB.y - nodeA.y;
+                    const dist = Math.hypot(dx, dy) || 1.0;
+                    
+                    // Ley de Hooke: F = k * (x - L)
+                    const displacement = dist - this.lengthHooke;
+                    const force = this.kHooke * displacement;
+                    const fx = (dx / dist) * force;
+                    const fy = (dy / dist) * force;
+                    
+                    if (nodeA !== this.draggedNode && !nodeA.isRouter) {
+                        nodeA.vx += fx;
+                        nodeA.vy += fy;
+                    }
+                    if (nodeB !== this.draggedNode && !nodeB.isRouter) {
+                        nodeB.vx -= fx;
+                        nodeB.vy -= fy;
+                    }
+                });
+                
+                // 3. Gravedad Central e integración de velocidad
+                for (const id in this.nodes) {
+                    const node = this.nodes[id];
+                    if (node === this.draggedNode) continue;
+                    
+                    // Router se queda quieto en el origen
+                    if (node.isRouter) {
+                        node.x = 0;
+                        node.y = 0;
+                        continue;
+                    }
+                    
+                    // Fuerza de gravedad hacia el origen (0,0)
+                    node.vx -= node.x * this.gravity;
+                    node.vy -= node.y * this.gravity;
+                    
+                    // Aplicar fricción (damping) e incrementar posición
+                    node.vx *= this.damping;
+                    node.vy *= this.damping;
+                    node.x += node.vx;
+                    node.y += node.vy;
+                    
+                    // Suavizar escalado de radio inicial (spawn)
+                    if (node.radius < node.targetRadius) {
+                        node.radius += (node.targetRadius - node.radius) * 0.1;
+                    }
+                }
+                
+                // 4. Gestión de partículas continuas de datos
+                // Cada segundo o aleatorio generamos flujo continuo si el escaneo está activo
+                // 4. Flujo continuo de partículas bidireccional (mientras haya hosts)
+                if (nodeIds.length > 1 && this.particles.length < 60) {
+                    const hostIds = nodeIds.filter(k => k !== 'Router');
+                    if (hostIds.length > 0 && Math.random() < 0.12) {
+                        const randomHostId = hostIds[Math.floor(Math.random() * hostIds.length)];
+                        // Alterna dirección: 70% Router→Host, 30% Host→Router
+                        const direction = Math.random() < 0.7 ? 'to' : 'from';
+                        this.triggerDataFlash(randomHostId, direction);
+                    }
+                }
+                
+                // Actualizar progreso de las partículas
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.progress += p.speed;
+                    if (p.progress >= 1.0) {
+                        // Partícula llegó a su destino, removerla
+                        this.particles.splice(i, 1);
+                    }
+                }
+            }
+            
+            // --- RENDERIZADO VISUAL EN EL CANVAS ---
+            draw() {
+                if (!this.canvas) return;
+                const ctx = this.ctx;
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+                
+                // Limpiar pantalla
+                ctx.fillStyle = "#040406";
+                ctx.fillRect(0, 0, w, h);
+                
+                // Guardar contexto para aplicar Zoom & Pan
+                ctx.save();
+                ctx.translate(this.panX, this.panY);
+                ctx.scale(this.zoom, this.zoom);
+                
+                // Dibujar cuadrícula sutil Obsidian de fondo
+                ctx.strokeStyle = "rgba(0, 255, 102, 0.02)";
+                ctx.lineWidth = 1;
+                const gridSize = 40;
+                
+                // Rango de la cuadrícula basado en el pan y el zoom
+                const startX = Math.floor((-this.panX) / this.zoom / gridSize) * gridSize - gridSize;
+                const endX = startX + (w / this.zoom) + gridSize * 2;
+                const startY = Math.floor((-this.panY) / this.zoom / gridSize) * gridSize - gridSize;
+                const endY = startY + (h / this.zoom) + gridSize * 2;
+                
+                for (let x = startX; x < endX; x += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, startY);
+                    ctx.lineTo(x, endY);
+                    ctx.stroke();
+                }
+                for (let y = startY; y < endY; y += gridSize) {
+                    ctx.beginPath();
+                    ctx.moveTo(startX, y);
+                    ctx.lineTo(endX, y);
+                    ctx.stroke();
+                }
+                
+                // 1. DIBUJAR LÍNEAS DE CONEXIÓN
+                this.connections.forEach(conn => {
+                    const fromNode = this.nodes[conn.from];
+                    const toNode = this.nodes[conn.to];
+                    if (!fromNode || !toNode) return;
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(fromNode.x, fromNode.y);
+                    ctx.lineTo(toNode.x, toNode.y);
+                    
+                    // Color de línea según estado del host (alerta = rojo, normal = verde)
+                    ctx.strokeStyle = toNode.color === '#ff0055' ? "rgba(255, 0, 85, 0.35)" : "rgba(0, 255, 102, 0.22)";
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                });
+                
+                // 2. DIBUJAR FLUJO CONTINUO DE DATOS (Partículas fotónicas bidireccionales)
+                this.particles.forEach(p => {
+                    const fromNode = this.nodes[p.from];
+                    const toNode = this.nodes[p.to];
+                    if (!fromNode || !toNode) return;
+
+                    // Interpolar posición en la línea de conexión
+                    const px = fromNode.x + (toNode.x - fromNode.x) * p.progress;
+                    const py = fromNode.y + (toNode.y - fromNode.y) * p.progress;
+
+                    // Estela de la partícula (trail)
+                    const trailLen = 0.06;
+                    const trailStart = Math.max(0, p.progress - trailLen);
+                    const tx = fromNode.x + (toNode.x - fromNode.x) * trailStart;
+                    const ty = fromNode.y + (toNode.y - fromNode.y) * trailStart;
+                    const trailGrad = ctx.createLinearGradient(tx, ty, px, py);
+                    const pColor = toNode.color === '#ff0055' ? '#ff0055' : (p.color || '#00ff66');
+                    trailGrad.addColorStop(0, 'transparent');
+                    trailGrad.addColorStop(1, pColor + 'cc');
+                    ctx.beginPath();
+                    ctx.moveTo(tx, ty);
+                    ctx.lineTo(px, py);
+                    ctx.strokeStyle = trailGrad;
+                    ctx.lineWidth = p.size * 0.8;
+                    ctx.stroke();
+
+                    // Núcleo luminoso de la partícula
+                    ctx.beginPath();
+                    ctx.arc(px, py, p.size, 0, Math.PI * 2);
+                    ctx.fillStyle = pColor;
+                    ctx.shadowColor = pColor;
+                    ctx.shadowBlur = 10;
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+                });
+                
+                // 3. DIBUJAR NODOS Y ETIQUETAS IP
+                for (const id in this.nodes) {
+                    const node = this.nodes[id];
+                    node.pulse += node.pulseSpeed;
+
+                    if (node.isRouter) {
+                        // Anillo exterior grande (pulsante lento)
+                        ctx.beginPath();
+                        const outerR = node.radius + 8 + Math.sin(node.pulse * 0.7) * 4;
+                        ctx.arc(node.x, node.y, outerR, 0, Math.PI * 2);
+                        ctx.strokeStyle = `rgba(0, 255, 102, ${0.08 + Math.sin(node.pulse) * 0.04})`;
+                        ctx.lineWidth = 1.5;
+                        ctx.stroke();
+
+                        // Anillo interior (pulsante rápido)
+                        ctx.beginPath();
+                        const innerR = node.radius + Math.sin(node.pulse * 1.5) * 3;
+                        ctx.arc(node.x, node.y, innerR, 0, Math.PI * 2);
+                        ctx.strokeStyle = "rgba(0, 255, 102, 0.35)";
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    } else {
+                        // Halo sutil para nodos host
+                        ctx.beginPath();
+                        ctx.arc(node.x, node.y, node.radius + 3 + Math.sin(node.pulse) * 1.5, 0, Math.PI * 2);
+                        const haloColor = node.color === '#ff0055' ? 'rgba(255,0,85,0.15)' : 'rgba(0,255,102,0.08)';
+                        ctx.strokeStyle = haloColor;
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+
+                    // Círculo principal del nodo
+                    ctx.beginPath();
+                    ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = node.color;
+                    ctx.shadowColor = node.color;
+                    ctx.shadowBlur = node.isRouter ? 18 : 8;
+                    ctx.fill();
+                    ctx.shadowBlur = 0;
+
+                    // Borde interior brillante para contraste
+                    ctx.strokeStyle = node.isRouter ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.7)";
+                    ctx.lineWidth = node.isRouter ? 2 : 1.5;
+                    ctx.stroke();
+
+                    // ETIQUETAS DE TEXTO (soporte multi-línea con \n)
+                    const lines = node.label.split('\n');
+                    const lineH = node.isRouter ? 12 : 10;
+                    // Medir el ancho con la fuente más grande
+                    ctx.font = node.isRouter ? "bold 10px monospace" : "9px monospace";
+                    const maxW = Math.max(...lines.map(l => ctx.measureText(l).width));
+                    let labelY = node.y + node.radius + 6;
+
+                    // Fondo del label
+                    ctx.fillStyle = "rgba(0, 0, 0, 0.82)";
+                    ctx.fillRect(
+                        node.x - maxW / 2 - 5,
+                        labelY - 2,
+                        maxW + 10,
+                        lineH * lines.length + 4
+                    );
+
+                    // Texto de cada línea
+                    ctx.textAlign = "center";
+                    ctx.textBaseline = "top";
+                    lines.forEach((ln, i) => {
+                        ctx.font = node.isRouter
+                            ? (i === 0 ? "bold 10px monospace" : "8px monospace")
+                            : "9px monospace";
+                        ctx.fillStyle = node.isRouter
+                            ? (i === 0 ? "#00ff66" : "rgba(0,255,102,0.7)")
+                            : (node.color === '#ff0055' ? '#ff6688' : "#e0ffe8");
+                        ctx.fillText(ln, node.x, labelY + i * lineH);
+                    });
+                }
+                
+                // Restaurar contexto original
+                ctx.restore();
+            }
+            
+            animate() {
+                if (!this.isInitialized) return;
+                this.updatePhysics();
+                this.draw();
+                requestAnimationFrame(() => this.animate());
+            }
+        }
+    </script>
+</body>
+</html>
