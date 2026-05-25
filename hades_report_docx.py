@@ -351,13 +351,16 @@ def _shade(cell, hex_fill):
     tcPr.append(shd)
 
 
-def _set_cell_text(cell, text, bold=False, color=None, size=9, align=None, white=False):
+def _set_cell_text(cell, text, bold=False, color=None, size=11, align=None, white=False):
     cell.text = ""
     p = cell.paragraphs[0]
+    p.paragraph_format.line_spacing = 1.0
+    p.paragraph_format.space_after = Pt(2)
     if align is not None:
         p.alignment = align
     run = p.add_run(str(text))
     run.bold = bold
+    run.font.name = "Times New Roman"
     run.font.size = Pt(size)
     if white:
         run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
@@ -381,178 +384,356 @@ def _add_page_number(footer_par):
     run._r.append(fldChar1); run._r.append(instrText); run._r.append(fldChar2)
 
 
+# Metodología por fases (kill-chain) — estructura solicitada para el informe
+PHASES = [
+    ("FASE 1 — RECONOCIMIENTO",
+     "Escaneo de servicios con Nmap.",
+     "Servicio SSH expuesto.",
+     "Inventario de la superficie de ataque.",
+     "Reducir exposición y filtrar el acceso por firewall."),
+    ("FASE 2 — IDENTIFICACIÓN DE VULNERABILIDAD",
+     "Metasploit ssh_login.",
+     "Credenciales SSH débiles.",
+     "Registro de la credencial comprometida.",
+     "Contraseñas robustas, MFA y bloqueo por intentos fallidos."),
+    ("FASE 3 — EXPLOTACIÓN / OBTENCIÓN DE ACCESO",
+     "Sesión vía ssh_login.",
+     "Acceso no autorizado al servidor.",
+     "Validación del acceso.",
+     "Mínimo privilegio y monitoreo de accesos."),
+    ("FASE 4 — BACKDOOR Y ACCESO REMOTO",
+     "Payload msfvenom + multi/handler.",
+     "Ejecución remota y sesión Meterpreter.",
+     "Documentación del canal.",
+     "Antivirus/EDR, parches y control de aplicaciones."),
+    ("FASE 5 — POST-EXPLOTACIÓN Y PERSISTENCIA",
+     "Cron, .bashrc y cuenta privilegiada.",
+     "Múltiples mecanismos de persistencia y malware implantado.",
+     "Registro de cada artefacto.",
+     "Monitoreo de integridad, hardening y gestión de cuentas/servicios."),
+    ("FASE 6 — ERRADICACIÓN Y REPORTE",
+     "Detección y limpieza por el blue team.",
+     "Entorno restaurable.",
+     "Eliminación de todos los artefactos.",
+     "Plan de respuesta a incidentes y lecciones aprendidas."),
+]
+
+# Riesgo determinista → severidad de negocio
+SEVERITY = {"CRÍTICO": "Crítica", "ALTO": "Alta", "MEDIO": "Media", "BAJO": "Baja", "INFORMATIVO": "Informativa"}
+
+
+def _business_impact(host):
+    """Traduce los hallazgos técnicos de un host a riesgo de NEGOCIO concreto."""
+    ports = {p["port"] for p in host["ports"]}
+    svcs = " ".join(p["service"].lower() for p in host["ports"])
+    os_l = (host.get("os") or "").lower()
+    impacts = []
+    if (ports & {"445", "139", "135"}) or "microsoft-ds" in svcs or "netbios" in svcs:
+        impacts.append("robo o cifrado de información (ransomware) y movimiento lateral")
+    if host["cves"] or any(s in svcs for s in ()) or host["nuclei"]:
+        impacts.append("explotación de vulnerabilidades conocidas")
+    if (ports & {"23", "21"}) or "telnet" in svcs or "ftp" in svcs:
+        impacts.append("interceptación de credenciales por tráfico sin cifrar")
+    if ports & {"22", "3389", "5900"}:
+        impacts.append("acceso remoto no autorizado al sistema")
+    if OUTDATED_OS_RE.search(os_l):
+        impacts.append("interrupción de operaciones por software sin soporte")
+    if not impacts:
+        if host["status"].startswith("caído"):
+            return "Sin impacto inmediato (host inactivo)."
+        if not host["ports"]:
+            return "Bajo: sin servicios expuestos a la red."
+        impacts.append("exposición de servicios en la red interna")
+    return "Riesgo de " + "; ".join(impacts) + "."
+
+
+def _prob_impact(host):
+    """Probabilidad e impacto (0=Bajo,1=Medio,2=Alto) para la matriz de riesgo."""
+    score_p = len(host["cves"]) * 2 + sum(1 for p in host["ports"] if p["port"] in RISKY_PORTS) + len(host["nuclei"])
+    prob = 2 if score_p >= 3 else (1 if score_p >= 1 else 0)
+    r = host["risk"]
+    imp = 2 if r in ("CRÍTICO", "ALTO") else (1 if r == "MEDIO" else 0)
+    return prob, imp
+
+
 def _heading(doc, text, level=1):
-    h = doc.add_heading(text, level=level)
-    for run in h.runs:
-        run.font.color.rgb = _rgb(BRANDING["primary"] if level == 1 else BRANDING["secondary"])
-    return h
+    """Título: Times New Roman, NEGRITA, MAYÚSCULA y SUBRAYADO."""
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.paragraph_format.space_before = Pt(14 if level == 1 else 9)
+    p.paragraph_format.space_after = Pt(6)
+    p.paragraph_format.line_spacing = 1.0
+    run = p.add_run(text.upper())
+    run.bold = True
+    run.underline = True
+    run.font.name = "Times New Roman"
+    run.font.size = Pt(15 if level == 1 else 14)
+    run.font.color.rgb = _rgb(BRANDING["primary"])
+    return p
+
+
+def _body(doc, text):
+    """Párrafo de cuerpo: Times New Roman 14, interlineado 1.5, justificado (hereda Normal)."""
+    return doc.add_paragraph(text)
+
+
+def _subtitle(doc, text):
+    """Subtítulo menor (negrita, TNR) para etiquetar tablas dentro de un anexo."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(8); p.paragraph_format.space_after = Pt(2)
+    p.paragraph_format.line_spacing = 1.0
+    r = p.add_run(text); r.bold = True; r.font.name = "Times New Roman"
+    r.font.size = Pt(12); r.font.color.rgb = _rgb(BRANDING["secondary"])
+
+
+def _render_traffic(doc, summary):
+    """Presenta el resumen de tráfico Tshark en CUADROS (tablas) para mejor lectura."""
+    pk = re.search(r"capturadas:\s*(\d+)", summary)
+    extn = re.search(r"IPs externas \(internet\):\s*(\d+)", summary)
+    proto = re.search(r"Protocolos detectados:\s*\{(.*?)\}", summary)
+
+    # Resumen general
+    st = doc.add_table(rows=0, cols=2); st.style = "Table Grid"
+    def srow(k, v):
+        c = st.add_row().cells
+        _set_cell_text(c[0], k, bold=True, size=11, color=_rgb(BRANDING["primary"]))
+        _set_cell_text(c[1], v, size=11)
+    srow("Paquetes / conexiones capturadas", pk.group(1) if pk else "0")
+    srow("IPs externas (Internet)", extn.group(1) if extn else "0")
+
+    # Protocolos detectados
+    if proto and proto.group(1).strip():
+        _subtitle(doc, "Protocolos detectados")
+        ptab = doc.add_table(rows=1, cols=2); ptab.style = "Table Grid"
+        _header_row(ptab, ["Protocolo", "Nº de paquetes"])
+        for m in re.finditer(r"'([^']+)':\s*(\d+)", proto.group(1)):
+            row = ptab.add_row().cells
+            _set_cell_text(row[0], m.group(1), size=10)
+            _set_cell_text(row[1], m.group(2), size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    # IPs externas detectadas
+    extblk = re.search(r"IPs externas detectadas:(.*?)(?:\n\s*Actividad|\Z)", summary, re.DOTALL)
+    if extblk:
+        ips = re.findall(r"\d{1,3}(?:\.\d{1,3}){3}", extblk.group(1))
+        if ips:
+            _subtitle(doc, "IPs externas detectadas (Internet)")
+            et = doc.add_table(rows=1, cols=1); et.style = "Table Grid"
+            _header_row(et, ["Dirección IP externa"])
+            for ip in ips:
+                _set_cell_text(et.add_row().cells[0], ip, size=10)
+
+    # Actividad de tráfico por host
+    acts = []
+    for line in summary.splitlines():
+        m = re.match(r"\s*\[([\d.]+)\]:\s*(.+)", line)
+        if m:
+            acts.append((m.group(1), m.group(2).strip()))
+    if acts:
+        _subtitle(doc, "Actividad de tráfico por host (LAN)")
+        at = doc.add_table(rows=1, cols=2); at.style = "Table Grid"
+        _header_row(at, ["Host (LAN)", "Conexiones detectadas"])
+        for ip, conns in acts:
+            row = at.add_row().cells
+            _set_cell_text(row[0], ip, bold=True, size=10)
+            _set_cell_text(row[1], conns, size=9)
 
 
 def build_iso27001_docx(data, output_path):
     doc = Document()
 
-    # Estilo base
+    # ── Estilo base: Times New Roman 14, interlineado 1.5, texto justificado ──
     normal = doc.styles["Normal"]
-    normal.font.name = "Calibri"
-    normal.font.size = Pt(10.5)
+    normal.font.name = "Times New Roman"
+    normal.font.size = Pt(14)
+    normal.paragraph_format.line_spacing = 1.5
+    normal.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    normal.paragraph_format.space_after = Pt(6)
 
-    # Cabecera y pie con marca
+    # Cabecera y pie de página
     section = doc.sections[0]
-    header = section.header
-    hp = header.paragraphs[0]
+    hp = section.header.paragraphs[0]
     hp.text = f"{BRANDING['company_name']}  ·  {BRANDING['confidentiality']}"
     hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     for r in hp.runs:
-        r.font.size = Pt(8); r.font.color.rgb = _rgb(BRANDING["secondary"])
-
-    footer = section.footer
-    fp = footer.paragraphs[0]
+        r.font.name = "Times New Roman"; r.font.size = Pt(9); r.font.color.rgb = _rgb(BRANDING["secondary"])
+    fp = section.footer.paragraphs[0]
     fp.text = f"{BRANDING['confidentiality']} — {BRANDING['report_title']}   ·   Página "
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for r in fp.runs:
-        r.font.size = Pt(8); r.font.color.rgb = _rgb(BRANDING["secondary"])
+        r.font.name = "Times New Roman"; r.font.size = Pt(9); r.font.color.rgb = _rgb(BRANDING["secondary"])
     _add_page_number(fp)
 
-    # ───────── PORTADA ─────────
-    logo = BRANDING.get("logo_path", "")
-    if logo and os.path.exists(logo):
-        try:
-            doc.add_picture(logo, width=Inches(2.2))
-            doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        except Exception:
-            pass
-    else:
-        ph = doc.add_paragraph()
-        ph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r = ph.add_run("[ LOGO DE TU EMPRESA ]")
-        r.italic = True; r.font.size = Pt(11); r.font.color.rgb = _rgb(BRANDING["secondary"])
-
-    for _ in range(2):
-        doc.add_paragraph()
-
-    t = doc.add_paragraph(); t.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = t.add_run(BRANDING["report_title"].upper())
-    r.bold = True; r.font.size = Pt(26); r.font.color.rgb = _rgb(BRANDING["primary"])
-
-    s = doc.add_paragraph(); s.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = s.add_run(f"Conforme a {BRANDING['standard']}")
-    r.font.size = Pt(14); r.font.color.rgb = _rgb(BRANDING["secondary"])
-
-    doc.add_paragraph()
-    line = doc.add_paragraph(); line.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r = line.add_run("INFORME EJECUTIVO DE CIBERSEGURIDAD")
-    r.font.size = Pt(12); r.bold = True
-
-    for _ in range(4):
-        doc.add_paragraph()
-
-    # Tabla de metadatos en portada
-    meta = doc.add_table(rows=0, cols=2)
-    meta.alignment = WD_TABLE_ALIGNMENT.CENTER
-    def meta_row(k, v):
-        row = meta.add_row().cells
-        _set_cell_text(row[0], k, bold=True, size=10, color=_rgb(BRANDING["primary"]))
-        _set_cell_text(row[1], v, size=10)
-    meta_row("Organización", BRANDING["company_name"])
-    meta_row("Red auditada", data.get("subnet") or "N/D")
-    meta_row("Fecha de auditoría", data.get("date") or datetime.now().strftime("%d/%m/%Y %H:%M"))
-    meta_row("Dispositivos detectados", data.get("devices") or str(len(data["hosts"])))
-    meta_row("Elaborado por", BRANDING["author"])
-    meta_row("Clasificación", BRANDING["confidentiality"])
-    meta_row("Estándar de referencia", BRANDING["standard"])
-
-    doc.add_page_break()
-
-    # ───────── 1. RESUMEN EJECUTIVO ─────────
-    _heading(doc, "1. Resumen Ejecutivo", 1)
-
     hosts = data["hosts"]
+    by_risk = sorted(hosts, key=lambda x: RISK_ORDER.index(x["risk"]))
     up = [h for h in hosts if not h["status"].startswith("caído")]
     total_ports = sum(len(h["ports"]) for h in hosts)
     total_cves = sorted({c for h in hosts for c in h["cves"]})
     risk_count = {lvl: sum(1 for h in hosts if h["risk"] == lvl) for lvl in RISK_ORDER}
+    criticos = risk_count["CRÍTICO"] + risk_count["ALTO"]
 
-    doc.add_paragraph(
-        f"Se realizó una auditoría de seguridad sobre la red {data.get('subnet') or 'objetivo'}, "
-        f"identificando {len(hosts)} dispositivo(s), de los cuales {len(up)} respondieron activamente. "
-        f"Se detectaron {total_ports} puerto(s)/servicio(s) abiertos y {len(total_cves)} vulnerabilidad(es) "
-        f"con identificador CVE asociado. El presente informe consolida todos los hallazgos en un único "
-        f"documento ejecutivo, evaluando el riesgo de forma determinista y mapeándolo a los controles del "
-        f"Anexo A de {BRANDING['standard']}."
-    )
+    # ── PORTADA: logo arriba a la izquierda ──
+    logo = BRANDING.get("logo_path", "")
+    if logo and os.path.exists(logo):
+        try:
+            doc.add_picture(logo, width=Inches(1.8))
+            doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.LEFT
+            doc.paragraphs[-1].paragraph_format.line_spacing = 1.0
+        except Exception:
+            doc.add_paragraph()
+    else:
+        lp = doc.add_paragraph(); lp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        r = lp.add_run("[ LOGO ]"); r.italic = True
 
-    _heading(doc, "Distribución de riesgo", 2)
-    rt = doc.add_table(rows=1, cols=2)
-    rt.style = "Table Grid"
-    _header_row(rt, ["Nivel de riesgo", "Nº de activos"])
-    for lvl in RISK_ORDER:
-        row = rt.add_row().cells
-        _set_cell_text(row[0], lvl, bold=True, white=True)
-        _shade(row[0], RISK_COLORS[lvl])
-        _set_cell_text(row[1], risk_count[lvl], align=WD_ALIGN_PARAGRAPH.CENTER)
+    for _ in range(3):
+        doc.add_paragraph()
+    t = doc.add_paragraph(); t.alignment = WD_ALIGN_PARAGRAPH.CENTER; t.paragraph_format.line_spacing = 1.0
+    r = t.add_run(BRANDING["report_title"].upper())
+    r.bold = True; r.underline = True; r.font.name = "Times New Roman"; r.font.size = Pt(24)
+    r.font.color.rgb = _rgb(BRANDING["primary"])
+    s = doc.add_paragraph(); s.alignment = WD_ALIGN_PARAGRAPH.CENTER; s.paragraph_format.line_spacing = 1.0
+    r = s.add_run(f"Conforme a {BRANDING['standard']}")
+    r.font.name = "Times New Roman"; r.font.size = Pt(14); r.font.color.rgb = _rgb(BRANDING["secondary"])
 
-    # ───────── 2. ALCANCE Y OBJETIVOS ─────────
-    _heading(doc, "2. Alcance y Objetivos", 1)
-    doc.add_paragraph(
-        "El alcance de esta auditoría comprende el descubrimiento y la evaluación de seguridad de los "
-        f"activos accesibles en la red local {data.get('subnet') or 'objetivo'}. Los objetivos son: "
-        "(a) inventariar los dispositivos activos; (b) identificar servicios y puertos expuestos; "
-        "(c) detectar vulnerabilidades técnicas conocidas; (d) analizar el tráfico de red en busca de "
-        "actividad anómala; y (e) emitir recomendaciones priorizadas conforme a ISO/IEC 27001."
-    )
+    for _ in range(3):
+        doc.add_paragraph()
+    meta = doc.add_table(rows=0, cols=2); meta.alignment = WD_TABLE_ALIGNMENT.CENTER
+    def meta_row(k, v):
+        c = meta.add_row().cells
+        _set_cell_text(c[0], k, bold=True, size=12, color=_rgb(BRANDING["primary"]))
+        _set_cell_text(c[1], v, size=12)
+    meta_row("Organización", BRANDING["company_name"])
+    meta_row("Red auditada", data.get("subnet") or "N/D")
+    meta_row("Fecha de auditoría", data.get("date") or datetime.now().strftime("%d/%m/%Y %H:%M"))
+    meta_row("Dispositivos detectados", data.get("devices") or str(len(hosts)))
+    meta_row("Elaborado por", BRANDING["author"])
+    meta_row("Clasificación", BRANDING["confidentiality"])
+    meta_row("Estándar de referencia", BRANDING["standard"])
+    doc.add_page_break()
 
-    # ───────── 3. METODOLOGÍA ─────────
-    _heading(doc, "3. Metodología", 1)
-    doc.add_paragraph(
-        "La auditoría se ejecutó con el agente HADES, que orquesta herramientas estándar de la industria "
-        "en un pipeline robusto y reproducible:"
-    )
+    # ── 1. RESUMEN EJECUTIVO (lenguaje de negocio, sin tecnicismos) ──
+    _heading(doc, "1. Resumen Ejecutivo", 1)
+    nivel_global = "ALTO" if criticos else ("MEDIO" if risk_count["MEDIO"] else "BAJO")
+    _body(doc,
+        f"Se evaluó la seguridad de la red corporativa ({data.get('subnet') or 'objetivo'}) para determinar "
+        f"qué tan expuesta está la organización ante un ciberataque. Se revisaron {len(hosts)} equipos, de los "
+        f"cuales {len(up)} estaban activos. En términos de negocio, el nivel de riesgo global es {nivel_global}: "
+        f"se identificaron {criticos} activo(s) que requieren acción prioritaria por su potencial de causar robo "
+        f"de información, interrupción de las operaciones o acceso no autorizado a los sistemas. La conclusión "
+        f"principal es que existen servicios expuestos y debilidades que un atacante podría aprovechar. Este "
+        f"informe traduce cada hallazgo técnico en un riesgo de negocio y en una acción concreta priorizada; el "
+        f"detalle técnico reproducible se incluye en los anexos para no saturar la lectura directiva.")
+
+    # ── 2. ALCANCE Y METODOLOGÍA ──
+    _heading(doc, "2. Alcance y Metodología", 1)
+    _body(doc,
+        f"Sistemas evaluados: dispositivos accesibles en la red {data.get('subnet') or 'objetivo'}. "
+        f"Fecha: {data.get('date') or datetime.now().strftime('%d/%m/%Y')}. "
+        f"Autorización: auditoría interna autorizada por la dirección. "
+        f"Estándar de referencia: {BRANDING['standard']}. La evaluación combina descubrimiento de red, "
+        f"identificación de servicios y vulnerabilidades, captura de tráfico y análisis asistido, siguiendo la "
+        f"metodología por fases que se describe a continuación.")
     mt = doc.add_table(rows=1, cols=2); mt.style = "Table Grid"
-    _header_row(mt, ["Herramienta", "Función en la auditoría"])
-    for tool, desc in [
-        ("Nmap", "Descubrimiento de hosts (ARP) y escaneo de puertos, servicios y sistema operativo."),
-        ("Nuclei", "Detección de vulnerabilidades web mediante plantillas (CVE, exposiciones, malas configuraciones)."),
-        ("Tshark", "Captura y análisis pasivo de tráfico de red."),
-        ("OpenSSL", "Auditoría de configuración TLS/SSL de servicios cifrados."),
-        ("Ollama (IA local)", "Análisis consultivo de los hallazgos (no decisorio)."),
-    ]:
+    _header_row(mt, ["Herramienta", "Función"])
+    for tool, desc in [("Nmap", "Descubrimiento de equipos, puertos, servicios y sistema operativo."),
+                       ("Nuclei", "Detección de vulnerabilidades web conocidas (CVE, exposiciones)."),
+                       ("Tshark", "Captura y análisis del tráfico de red."),
+                       ("OpenSSL", "Verificación del cifrado TLS/SSL."),
+                       ("IA local (Ollama)", "Interpretación consultiva de los hallazgos (no decisoria).")]:
         row = mt.add_row().cells
         _set_cell_text(row[0], tool, bold=True, color=_rgb(BRANDING["primary"]))
         _set_cell_text(row[1], desc)
 
-    # ───────── 4. RESUMEN DE HALLAZGOS ─────────
-    _heading(doc, "4. Resumen de Hallazgos por Activo", 1)
-    ht = doc.add_table(rows=1, cols=6); ht.style = "Table Grid"
-    _header_row(ht, ["Host (IP)", "Estado", "Sistema operativo", "Puertos abiertos", "CVE", "Riesgo"])
-    for h in sorted(hosts, key=lambda x: RISK_ORDER.index(x["risk"])):
-        row = ht.add_row().cells
-        _set_cell_text(row[0], h["ip"], bold=True, size=9)
-        _set_cell_text(row[1], h["status"], size=8)
-        _set_cell_text(row[2], (h["os"] or "N/D")[:60], size=8)
-        ports_str = ", ".join(f"{p['port']}/{p['proto']}" for p in h["ports"]) or "—"
-        _set_cell_text(row[3], ports_str, size=8)
-        _set_cell_text(row[4], str(len(h["cves"])) if h["cves"] else "—", size=9,
-                       align=WD_ALIGN_PARAGRAPH.CENTER)
-        _set_cell_text(row[5], h["risk"], bold=True, white=True, size=9,
-                       align=WD_ALIGN_PARAGRAPH.CENTER)
-        _shade(row[5], RISK_COLORS[h["risk"]])
+    # ── 3. METODOLOGÍA POR FASES (kill-chain) ──
+    _heading(doc, "3. Metodología por Fases", 1)
+    _body(doc, "El ejercicio sigue la cadena de ataque en seis fases. Para cada fase se documenta el método "
+               "empleado, el hallazgo, la acción realizada y la mitigación recomendada:")
+    for titulo, metodo, hallazgo, accion, mitig in PHASES:
+        _heading(doc, titulo, 2)
+        pt = doc.add_table(rows=0, cols=2); pt.style = "Table Grid"
+        for k, v in [("Método", metodo), ("Hallazgo", hallazgo), ("Acción", accion), ("Mitigación", mitig)]:
+            c = pt.add_row().cells
+            _set_cell_text(c[0], k, bold=True, color=_rgb(BRANDING["primary"]), size=11)
+            _set_cell_text(c[1], v, size=11)
 
-    # ───────── 5. DETALLE POR ACTIVO ─────────
-    _heading(doc, "5. Detalle Técnico por Activo", 1)
-    for idx, h in enumerate(sorted(hosts, key=lambda x: RISK_ORDER.index(x["risk"])), 1):
-        _heading(doc, f"5.{idx}  Host {h['ip']}  —  Riesgo {h['risk']}", 2)
+    # ── 4. HALLAZGOS CLASIFICADOS POR SEVERIDAD ──
+    _heading(doc, "4. Hallazgos Clasificados por Severidad", 1)
+    _body(doc, "Cada activo se clasifica por severidad y se traduce a su impacto potencial en el negocio:")
+    ht = doc.add_table(rows=1, cols=4); ht.style = "Table Grid"
+    _header_row(ht, ["Activo (IP)", "Severidad", "Hallazgo principal", "Impacto en el negocio"])
+    for h in by_risk:
+        sev = SEVERITY.get(h["risk"], "Informativa")
+        hallazgo = ", ".join(f"{p['port']}/{p['service']}" for p in h["ports"][:4]) or "Sin servicios expuestos"
+        if h["cves"]:
+            hallazgo += f"; {len(h['cves'])} CVE"
+        row = ht.add_row().cells
+        _set_cell_text(row[0], h["ip"], bold=True, size=10)
+        _set_cell_text(row[1], sev, bold=True, white=True, size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _shade(row[1], RISK_COLORS[h["risk"]])
+        _set_cell_text(row[2], hallazgo, size=9)
+        _set_cell_text(row[3], _business_impact(h), size=9)
+
+    # ── 5. RECOMENDACIONES PRIORIZADAS Y PLAN DE REMEDIACIÓN ──
+    _heading(doc, "5. Recomendaciones Priorizadas y Plan de Remediación", 1)
+    rt = doc.add_table(rows=1, cols=4); rt.style = "Table Grid"
+    _header_row(rt, ["Recomendación", "Prioridad", "Responsable", "Plazo"])
+    for rec in _build_recommendations(data):
+        row = rt.add_row().cells
+        _set_cell_text(row[0], rec["rec"], size=10)
+        _set_cell_text(row[1], rec["prioridad"], bold=True, size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _set_cell_text(row[2], rec["responsable"], size=10)
+        _set_cell_text(row[3], rec["plazo"], size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    # ── 6. CONCLUSIONES Y MATRIZ DE RIESGO (probabilidad × impacto) ──
+    _heading(doc, "6. Conclusiones y Matriz de Riesgo", 1)
+    _body(doc,
+        f"La auditoría identificó {criticos} activo(s) de severidad Alta/Crítica que deben atenderse de inmediato. "
+        f"La siguiente matriz de riesgo (probabilidad × impacto) resume la exposición para la toma de decisiones:")
+    grid = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]   # grid[impacto][probabilidad]
+    for h in hosts:
+        pr, im = _prob_impact(h)
+        grid[im][pr] += 1
+    cellcolor = {0: "548235", 1: "548235", 2: "BF9000", 3: "E36C09", 4: "C00000"}
+    mat = doc.add_table(rows=4, cols=4); mat.style = "Table Grid"
+    _set_cell_text(mat.rows[0].cells[0], "Impacto \\ Probab.", bold=True, white=True, size=9)
+    _shade(mat.rows[0].cells[0], "%02X%02X%02X" % BRANDING["primary"])
+    for j, pl in enumerate(["Baja", "Media", "Alta"]):
+        _set_cell_text(mat.rows[0].cells[j + 1], pl, bold=True, white=True, size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
+        _shade(mat.rows[0].cells[j + 1], "%02X%02X%02X" % BRANDING["primary"])
+    for i, il in enumerate(["Alto", "Medio", "Bajo"]):
+        imp_idx = 2 - i
+        _set_cell_text(mat.rows[i + 1].cells[0], il, bold=True, white=True, size=10)
+        _shade(mat.rows[i + 1].cells[0], "%02X%02X%02X" % BRANDING["primary"])
+        for j in range(3):
+            n = grid[imp_idx][j]
+            _set_cell_text(mat.rows[i + 1].cells[j + 1], str(n) if n else "·", bold=True, white=True,
+                           size=12, align=WD_ALIGN_PARAGRAPH.CENTER)
+            _shade(mat.rows[i + 1].cells[j + 1], cellcolor[imp_idx + j])
+    doc.add_paragraph()
+    _body(doc, "Se recomienda implementar las acciones priorizadas y repetir esta auditoría de forma periódica "
+               "como parte del ciclo de mejora continua del Sistema de Gestión de Seguridad de la Información (SGSI).")
+
+    # ── 7. ANEXOS TÉCNICOS (detalle reproducible para TI) ──
+    doc.add_page_break()
+    _heading(doc, "7. Anexos Técnicos", 1)
+    _body(doc, "Detalle técnico reproducible para el equipo de TI: servicios, vulnerabilidades, evidencias, "
+               "traceroute y mapeo a controles ISO/IEC 27001.")
+    for idx, h in enumerate(by_risk, 1):
+        _heading(doc, f"7.{idx}  Activo {h['ip']} — Severidad {SEVERITY.get(h['risk'], 'Informativa')}", 2)
         info = doc.add_table(rows=0, cols=2); info.style = "Table Grid"
         def irow(k, v):
             c = info.add_row().cells
-            _set_cell_text(c[0], k, bold=True, size=9, color=_rgb(BRANDING["primary"]))
-            _set_cell_text(c[1], v if v else "N/D", size=9)
+            _set_cell_text(c[0], k, bold=True, size=10, color=_rgb(BRANDING["primary"]))
+            _set_cell_text(c[1], v if v else "N/D", size=10)
         irow("Estado", h["status"])
         irow("Sistema operativo", h["os"])
-        irow("Dirección MAC", f"{h['mac']} ({h['vendor']})" if h["mac"] else "N/D")
-        irow("Vulnerabilidades (CVE)", ", ".join(h["cves"]) if h["cves"] else "Ninguna identificada por CVE")
+        irow("Tipo de dispositivo", h.get("device_type"))
+        irow("Dirección MAC / fabricante", f"{h['mac']} ({h['vendor']})" if h["mac"] else "N/D")
+        irow("Latencia", h.get("latency"))
+        irow("Vulnerabilidades (CVE)", ", ".join(h["cves"]) if h["cves"] else "Ninguna por CVE")
         if h["nuclei"]:
             irow("Hallazgos Nuclei", "\n".join(h["nuclei"]))
-
+        if h.get("traceroute"):
+            irow("Traceroute", "  /  ".join(f"{x['hop']}.{x['ip']} ({x['rtt']})" for x in h["traceroute"]))
         if h["ports"]:
             pt = doc.add_table(rows=1, cols=4); pt.style = "Table Grid"
             _header_row(pt, ["Puerto", "Protocolo", "Servicio", "Versión"])
@@ -561,101 +742,75 @@ def build_iso27001_docx(data, output_path):
                 _set_cell_text(row[0], p["port"], size=9)
                 _set_cell_text(row[1], p["proto"], size=9)
                 _set_cell_text(row[2], p["service"], size=9)
-                _set_cell_text(row[3], p["version"] or "—", size=8)
-
+                _set_cell_text(row[3], p["version"] or "—", size=9)
         if h["ai"]:
-            ap = doc.add_paragraph()
-            r = ap.add_run("Análisis consultivo (IA local):")
-            r.bold = True; r.font.color.rgb = _rgb(BRANDING["secondary"])
-            # Limpieza ligera de markdown del texto IA
-            clean = re.sub(r"\*\*(.+?)\*\*", r"\1", h["ai"])
-            doc.add_paragraph(clean[:3000])
+            ap = doc.add_paragraph(); r = ap.add_run("Análisis consultivo (IA local):")
+            r.bold = True; r.font.name = "Times New Roman"; r.font.color.rgb = _rgb(BRANDING["secondary"])
+            _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", h["ai"])[:3000])
         doc.add_paragraph()
 
-    # ───────── 6. MAPEO A CONTROLES ISO 27001 ─────────
-    _heading(doc, f"6. Mapeo a Controles del Anexo A de {BRANDING['standard']}", 1)
-    doc.add_paragraph(
-        "Los hallazgos se relacionan con los siguientes controles del Anexo A, que constituyen la base "
-        "para el plan de tratamiento de riesgos:"
-    )
+    _heading(doc, "Anexo — Mapeo a Controles ISO/IEC 27001 (Anexo A)", 2)
     ct = doc.add_table(rows=1, cols=3); ct.style = "Table Grid"
     _header_row(ct, ["Control", "Título", "Justificación"])
     for cid, title, why in map_iso_controls(data):
         row = ct.add_row().cells
-        _set_cell_text(row[0], cid, bold=True, size=9, color=_rgb(BRANDING["primary"]))
-        _set_cell_text(row[1], title, size=9)
-        _set_cell_text(row[2], why, size=8)
+        _set_cell_text(row[0], cid, bold=True, size=10, color=_rgb(BRANDING["primary"]))
+        _set_cell_text(row[1], title, size=10)
+        _set_cell_text(row[2], why, size=9)
 
-    # ───────── 7. RECOMENDACIONES ─────────
-    _heading(doc, "7. Recomendaciones Priorizadas", 1)
-    recs = _build_recommendations(data)
-    for i, rec in enumerate(recs, 1):
-        p = doc.add_paragraph(style="List Number")
-        p.add_run(rec)
-
-    # ───────── 8. CONCLUSIÓN ─────────
-    _heading(doc, "8. Conclusión", 1)
-    crit = risk_count["CRÍTICO"] + risk_count["ALTO"]
-    doc.add_paragraph(
-        f"La auditoría identificó {crit} activo(s) con riesgo Alto o Crítico que requieren atención "
-        "prioritaria. La implementación de las recomendaciones y los controles del Anexo A indicados "
-        "reducirá significativamente la superficie de exposición de la red. Se recomienda repetir esta "
-        "auditoría de forma periódica como parte del ciclo de mejora continua del SGSI."
-    )
-
-    # ───────── APÉNDICE: TRÁFICO ─────────
     if data.get("traffic_summary") or data.get("traffic_ai"):
-        doc.add_page_break()
-        _heading(doc, "Apéndice A — Análisis de Tráfico de Red", 1)
+        _heading(doc, "Anexo — Análisis de Tráfico de Red", 2)
         if data.get("traffic_summary"):
-            doc.add_paragraph(data["traffic_summary"])
+            _render_traffic(doc, data["traffic_summary"])
         if data.get("traffic_ai"):
             r = doc.add_paragraph().add_run("Interpretación (IA local):")
-            r.bold = True; r.font.color.rgb = _rgb(BRANDING["secondary"])
-            doc.add_paragraph(re.sub(r"\*\*(.+?)\*\*", r"\1", data["traffic_ai"])[:3000])
+            r.bold = True; r.font.name = "Times New Roman"; r.font.color.rgb = _rgb(BRANDING["secondary"])
+            _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", data["traffic_ai"])[:3000])
 
     doc.save(output_path)
     return output_path
 
 
 def _build_recommendations(data):
-    recs = []
+    """Devuelve recomendaciones priorizadas con responsable y plazo (plan de remediación)."""
     cleartext = smb = mgmt = outdated = cves = False
     for h in data["hosts"]:
         for p in h["ports"]:
             s = p["service"].lower(); port = p["port"]
-            if s in ("telnet", "ftp") or port in ("21", "23"): cleartext = True
-            if port in ("445", "139", "135"): smb = True
-            if port in ("22", "3389", "5900"): mgmt = True
-        if OUTDATED_OS_RE.search(h.get("os", "")): outdated = True
-        if h["cves"] or h["nuclei"]: cves = True
-
+            if s in ("telnet", "ftp") or port in ("21", "23"):
+                cleartext = True
+            if port in ("445", "139", "135"):
+                smb = True
+            if port in ("22", "3389", "5900"):
+                mgmt = True
+        if OUTDATED_OS_RE.search(h.get("os", "")):
+            outdated = True
+        if h["cves"] or h["nuclei"]:
+            cves = True
+    recs = []
     if cves:
-        recs.append("Remediar las vulnerabilidades con CVE identificadas aplicando parches y actualizaciones "
-                    "del proveedor (control A.8.8 — Gestión de vulnerabilidades técnicas).")
+        recs.append({"rec": "Aplicar parches y actualizaciones para remediar las vulnerabilidades con CVE (control A.8.8).",
+                     "prioridad": "Alta", "responsable": "Equipo de TI / Sistemas", "plazo": "7 días"})
     if outdated:
-        recs.append("Actualizar o reemplazar los sistemas operativos y servicios obsoletos detectados, que "
-                    "ya no reciben soporte de seguridad.")
-    if cleartext:
-        recs.append("Deshabilitar servicios en texto claro (Telnet/FTP) y sustituirlos por equivalentes "
-                    "cifrados (SSH/SFTP/FTPS) — controles A.8.24 y A.8.5.")
+        recs.append({"rec": "Actualizar o reemplazar sistemas operativos y servicios sin soporte de seguridad.",
+                     "prioridad": "Alta", "responsable": "Infraestructura TI", "plazo": "30 días"})
     if smb:
-        recs.append("Restringir y segmentar el acceso a servicios SMB/RPC/NetBIOS (445/139/135); limitarlos "
-                    "a redes de gestión y aplicar firewall por host — control A.8.22.")
+        recs.append({"rec": "Restringir y segmentar SMB/RPC/NetBIOS (445/139/135) y aplicar firewall por host (A.8.22).",
+                     "prioridad": "Alta", "responsable": "Redes / Seguridad", "plazo": "15 días"})
+    if cleartext:
+        recs.append({"rec": "Deshabilitar Telnet/FTP y migrar a equivalentes cifrados SSH/SFTP/FTPS (A.8.24 / A.8.5).",
+                     "prioridad": "Media", "responsable": "Equipo de TI", "plazo": "15 días"})
     if mgmt:
-        recs.append("Proteger los servicios de administración remota (SSH/RDP/VNC) con autenticación fuerte, "
-                    "MFA y listas de control de acceso — control A.5.15.")
-    recs.append("Implementar monitorización continua del tráfico y los eventos de seguridad de la red "
-                "(control A.8.16).")
-    recs.append("Mantener un inventario actualizado de activos y una línea base de configuración segura "
-                "(controles A.5.9 y A.8.9).")
-    recs.append("Repetir esta auditoría periódicamente e integrarla en el ciclo de mejora continua del SGSI.")
+        recs.append({"rec": "Proteger el acceso remoto (SSH/RDP/VNC) con MFA, contraseñas robustas y listas de control (A.5.15).",
+                     "prioridad": "Media", "responsable": "Seguridad / TI", "plazo": "15 días"})
+    recs.append({"rec": "Implementar monitorización continua del tráfico y de los eventos de seguridad de la red (A.8.16).",
+                 "prioridad": "Media", "responsable": "SOC / Seguridad", "plazo": "30 días"})
+    recs.append({"rec": "Mantener un inventario de activos actualizado y una línea base de configuración segura (A.5.9 / A.8.9).",
+                 "prioridad": "Baja", "responsable": "TI / Gobernanza", "plazo": "60 días"})
+    recs.append({"rec": "Repetir la auditoría periódicamente como parte de la mejora continua del SGSI.",
+                 "prioridad": "Baja", "responsable": "Dirección / Seguridad", "plazo": "Trimestral"})
     return recs
 
-
-# ════════════════════════════════════════════════════════════════════════════
-#  API DE ALTO NIVEL / CLI
-# ════════════════════════════════════════════════════════════════════════════
 def generate_from_master(master_md_path, output_path=None):
     """Genera el DOCX a partir de un INFORME_MAESTRO.md. Devuelve la ruta del .docx."""
     with open(master_md_path, "r", encoding="utf-8") as f:

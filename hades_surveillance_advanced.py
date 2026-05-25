@@ -171,10 +171,10 @@ class HadesSurveillance:
         if not preflight["Nmap"]:
             log("Nmap es imprescindible para el descubrimiento; abortando.", "WARN")
             return
-        # Precargar el modelo IA en segundo plano para que las fases de análisis no
-        # congelen el flujo (el modelo tarda en cargar la primera vez).
-        if preflight["Ollama"]:
-            self.mcp.warm_up_model()
+        # Nota: NO se precarga el modelo en 2º plano para no competir con la primera
+        # llamada de análisis (Ollama es monohilo y una conexión concurrente durante la
+        # carga del modelo provocaba WinError 10060). La 1ª llamada por host paga la
+        # carga dentro del timeout amplio; las siguientes reutilizan el modelo (keep_alive).
 
         master_report  = f"# INFORME HADES SURVEILLANCE v{HADES_VERSION} — {timestamp}\n\n"
         master_report += "| Herramienta | Estado |\n|---|---|\n"
@@ -248,10 +248,18 @@ class HadesSurveillance:
         else:
             log("Analizando tráfico con IA...", "HADES")
             ia_trafico = self.mcp.ai_analysis(
-                f"Eres HADES, agente de ciberseguridad. Analiza este tráfico de red capturado "
-                f"en la red {self.target_range} durante {self.capture_seconds} segundos. "
-                f"Identifica comportamientos sospechosos, conexiones no autorizadas, "
-                f"protocolos inusuales y riesgos potenciales:\n\n{tshark_summary}"
+                f"Actúa como analista senior de tráfico de red (NSM/SOC) de HADES SENTINEL. Analiza "
+                f"EXCLUSIVAMENTE el tráfico real capturado abajo en la red {self.target_range} durante "
+                f"{self.capture_seconds} segundos (no inventes). Sé TÉCNICO y PRECISO: cita IPs, puertos y "
+                f"protocolos concretos del volcado. Evita generalidades vagas.\n\n"
+                f"Responde con esta estructura:\n"
+                f"1) PROTOCOLOS Y FLUJOS DOMINANTES: qué protocolos/puertos predominan y entre qué IPs.\n"
+                f"2) ANOMALÍAS: conexiones a IPs externas no esperadas, protocolos inusuales (Telnet, SMBv1, "
+                f"texto plano), posibles C2/exfiltración, escaneos internos — con la IP/puerto concreto.\n"
+                f"3) SEVERIDAD: Crítica/Alta/Media/Baja, justificada.\n"
+                f"4) IMPACTO DE NEGOCIO: en lenguaje no técnico.\n"
+                f"5) MITIGACIÓN: reglas de firewall/segmentación/cifrado concretas.\n\n"
+                f"DATOS REALES DEL TRÁFICO:\n{tshark_summary}"
             )
         master_report += f"### Análisis IA del Tráfico\n{ia_trafico}\n\n---\n\n"
 

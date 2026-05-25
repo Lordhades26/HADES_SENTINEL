@@ -113,9 +113,15 @@ def execute(cmd, timeout=300):
             time.sleep(0.1)
             elapsed += 0.1
             if elapsed >= timeout:
-                log(f"[TIMEOUT] Comando excedió {timeout}s. Terminando...", "WARN")
+                log(f"[TIMEOUT] Comando excedió {timeout}s. Terminando (se conserva la salida parcial)...", "WARN")
                 clean_up_current_process()
-                return f"[TIMEOUT] Comando excedió {timeout}s: {cmd}"
+                # Conservar lo capturado hasta el corte: si Nuclei/Nmap ya encontró
+                # hallazgos, NO deben perderse por agotar el tope de tiempo.
+                t_out.join(timeout=3)
+                t_err.join(timeout=3)
+                partial = "".join(stdout_chunks)
+                current_process = None
+                return partial + f"\n[TIMEOUT] Comando excedió {timeout}s; resultados PARCIALES: {cmd}"
 
         # Esperar a que los threads de lectura terminen (máximo 5s)
         t_out.join(timeout=5)
@@ -204,7 +210,7 @@ class HadesMCP:
         findings = []
         for line in raw_output.strip().splitlines():
             line = line.strip()
-            if not line or line.startswith("[STDERR]") or line.startswith("[ERROR]"):
+            if not line or line.startswith("[STDERR]") or line.startswith("[ERROR]") or line.startswith("[TIMEOUT]"):
                 continue
             try:
                 data = json.loads(line)
@@ -275,33 +281,37 @@ class HadesMCP:
         except Exception:
             return False
 
-    def ai_analysis(self, prompt, model="HADES-AUTO:latest", retries=1, timeout=90):
-        # ROBUSTEZ: si Ollama no está disponible, se OMITE el análisis IA de
-        # inmediato y la auditoría continúa. Timeout acotado (90s, 1 reintento)
-        # para no congelar el flujo: antes un fallo tardaba ~4 min y el usuario
-        # creía el panel colgado. 'keep_alive' mantiene el modelo cargado entre
-        # hosts, así sólo la PRIMERA llamada paga la carga del modelo.
-        if not self._ollama_available():
-            return "[IA] Ollama no disponible — análisis IA omitido (la auditoría continúa)."
+    def ai_analysis(self, prompt, model="HADES-AUTO:latest", retries=2, timeout=360):
+        # El análisis IA DEBE estar presente en el informe. NO usamos pre-chequeo de
+        # disponibilidad: cuando Ollama está OCUPADO cargando/generando el modelo,
+        # /api/tags tardaba >8s y se marcaba "no disponible" por error, omitiendo la
+        # IA. En su lugar llamamos directo: si Ollama está caído, la conexión se
+        # rechaza al instante (se captura abajo); si está cargando el modelo (4.7GB),
+        # la petición simplemente espera al timeout amplio (300s) y responde.
+        # num_predict acota la respuesta (genera rápido); keep_alive mantiene el
+        # modelo cargado durante todo el escaneo.
         payload = json.dumps({
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "keep_alive": "10m"
+            "keep_alive": "30m",
+            "options": {"num_predict": 450, "temperature": 0.35}
         }).encode()
         req = urllib.request.Request(
             WIN_PATHS["ollama"], data=payload,
             headers={"Content-Type": "application/json"}
         )
+        last = ""
         for i in range(retries + 1):
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as res:
-                    return json.loads(res.read().decode()).get("response", "")
+                    txt = json.loads(res.read().decode()).get("response", "").strip()
+                    return txt if txt else "[IA] Sin respuesta del modelo."
             except Exception as e:
-                if i == retries:
-                    return f"[IA] Análisis omitido (modelo no respondió a tiempo: {str(e)})."
-                time.sleep(2)
-        return "[IA] Sin respuesta"
+                last = str(e)
+                if i < retries:
+                    time.sleep(8)   # esperar a que el modelo termine de cargar / se libere
+        return f"[IA] Análisis omitido (el modelo no respondió tras {retries + 1} intentos: {last})."
 
     def warm_up_model(self, model="HADES-AUTO:latest"):
         """Precarga el modelo en segundo plano (4.7GB tarda en cargar). Así, cuando
@@ -362,12 +372,23 @@ class HadesMCP:
             ssl_out = self.ssl_audit(h, p)
             report.append("\n[SSL/TLS]\n" + ssl_out[:800])
 
-        # 5. IA analiza todo
+        # 5. IA analiza todo — estructura alineada al informe ejecutivo ISO 27001
         combined = "\n".join(report)
         ai_prompt = (
-            f"Eres HADES, agente de ciberseguridad ISO 27001. Analiza este informe del host {ip} "
-            f"e identifica: vulnerabilidades críticas, servicios expuestos, riesgos y recomendaciones. "
-            f"Sé conciso y técnico:\n\n{combined[:4000]}"
+            f"Actúa como analista senior de ciberseguridad (pentester + ISO/IEC 27001) de HADES SENTINEL. "
+            f"Analiza EXCLUSIVAMENTE los datos reales del host {ip} que se dan abajo (no inventes). Sé TÉCNICO, "
+            f"PRECISO y específico: nombra el servicio y su VERSIÓN exacta, cita los CVE concretos que aparezcan "
+            f"en los datos, e indica el vector de ataque real. Evita frases genéricas o vagas.\n\n"
+            f"Responde SIEMPRE con esta estructura numerada:\n"
+            f"1) HALLAZGO: servicios/puertos y vulnerabilidades concretas (con versión y CVE si constan).\n"
+            f"2) SEVERIDAD: Crítica/Alta/Media/Baja, justificada según exposición y explotabilidad real.\n"
+            f"3) FASE KILL-CHAIN: Reconocimiento, Identificación de vulnerabilidad, Explotación/acceso, "
+            f"Backdoor/acceso remoto, Post-explotación/persistencia o Erradicación.\n"
+            f"4) IMPACTO DE NEGOCIO: en lenguaje no técnico (robo de información, interrupción de operaciones, "
+            f"acceso no autorizado), específico para este activo.\n"
+            f"5) MITIGACIÓN: acciones concretas y accionables (configuración, parche, regla de firewall, MFA…), "
+            f"priorizadas.\n\n"
+            f"DATOS REALES DEL HOST:\n{combined[:4500]}"
         )
         ai_out = self.ai_analysis(ai_prompt)
         report.append("\n[ANÁLISIS IA HADES]\n" + ai_out)
