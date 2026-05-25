@@ -46,8 +46,8 @@ if sys.platform.startswith("win") or os.name == "nt":
 # ════════════════════════════════════════════════════════════════════════════
 _BRAND_DIR = os.path.dirname(os.path.abspath(__file__))
 BRANDING = {
-    "company_name":    "CIBERAGENTES — Agencia de Ciberseguridad",
-    "logo_path":       os.path.join(_BRAND_DIR, "assets", "logo_ciberagentes_doc.png"),
+    "company_name":    "HADES SENTINEL — CIBERAGENTES",
+    "logo_path":       os.path.join(_BRAND_DIR, "assets", "logo_hades_sentinel_doc.png"),
     "report_title":    "Informe de Auditoría de Seguridad de Red",
     "standard":        "ISO/IEC 27001:2022",
     "author":          "Equipo de Ciberseguridad · CIBERAGENTES",
@@ -131,6 +131,7 @@ def _parse_host_block(ip, blk):
     host = {
         "ip": ip, "status": "desconocido", "mac": "", "vendor": "",
         "os": "", "ports": [], "cves": [], "nuclei": [], "ai": "", "risk": "INFORMATIVO",
+        "latency": "", "traceroute": [], "device_type": "Desconocido",
     }
 
     # Sección NMAP
@@ -190,8 +191,62 @@ def _parse_host_block(ip, blk):
     if ai_m:
         host["ai"] = ai_m.group(1).split("\n---")[0].strip()
 
+    # Latencia: "Host is up (0.0032s latency)."
+    lat_m = re.search(r"Host is up \(([\d.]+)s latency\)", nmap_txt)
+    if lat_m:
+        host["latency"] = f"{float(lat_m.group(1)) * 1000:.1f} ms"
+
+    # Traceroute: sección "TRACEROUTE" → lista de saltos {hop, rtt, ip}
+    tr_m = re.search(r"TRACEROUTE.*?\n(.*?)(?:\n\s*\n|\nOS and Service|\nNmap done|$)", nmap_txt, re.DOTALL)
+    if tr_m:
+        for line in tr_m.group(1).splitlines():
+            hop = re.match(r"\s*(\d+)\s+(\.\.\.|[\d.]+\s*ms)\s+([0-9.]+)", line)
+            if hop:
+                host["traceroute"].append({"hop": hop.group(1), "rtt": hop.group(2).strip(), "ip": hop.group(3)})
+
+    host["device_type"] = _infer_device_type(host)
     host["risk"] = _assess_risk(host)
     return host
+
+
+# ── Inferencia de tipo de dispositivo (heurística determinista) ───────────────
+ROUTER_VENDORS = ("askey", "tp-link", "tplink", "cisco", "huawei", "mikrotik", "ubiquiti",
+                  "netgear", "d-link", "dlink", "zte", "arris", "technicolor", "avm", "fritz",
+                  "aruba", "ruckus", "zyxel", "sagemcom")
+PRINTER_HINTS = ("canon", "hewlett", "epson", "brother", "lexmark", "kyocera", "xerox", "ricoh")
+IOT_VENDORS = ("espressif", "tuya", "sonoff", "shelly", "amazon technologies", "nest", "ring",
+               "wyze", "raspberry", "particle", "texas instruments")
+NAS_VENDORS = ("synology", "qnap", "western digital", "seagate", "buffalo")
+MOBILE_VENDORS = ("apple", "samsung", "oneplus", "motorola", "oppo", "vivo", "realme")
+
+
+def _infer_device_type(host):
+    ports = {p["port"] for p in host["ports"]}
+    svcs = " ".join(p["service"].lower() for p in host["ports"])
+    vendor = (host.get("vendor") or "").lower()
+    os_l = (host.get("os") or "").lower()
+    ip = host["ip"]
+
+    if ip.endswith(".1") or any(v in vendor for v in ROUTER_VENDORS):
+        return "Router / Gateway"
+    if (ports & {"631", "9100", "515"}) or any(h in vendor for h in PRINTER_HINTS) \
+            or "printer" in svcs or "cups" in svcs or "ipp" in svcs:
+        return "Impresora"
+    if any(v in vendor for v in NAS_VENDORS):
+        return "NAS / Almacenamiento"
+    if "windows" in os_l or (ports & {"445", "139", "135"}):
+        return "Equipo Windows"
+    if ("linux" in os_l or "unix" in os_l) and (ports & {"22", "80", "443", "3306", "5432", "8080"}):
+        return "Servidor (Linux/Unix)"
+    if any(v in vendor for v in IOT_VENDORS) or "camera" in os_l or "webcam" in os_l or "android" in os_l:
+        return "IoT / Embebido"
+    if any(v in vendor for v in MOBILE_VENDORS) and not ports:
+        return "Dispositivo móvil"
+    if host["status"].startswith("caído"):
+        return "Inactivo"
+    if not ports and host["status"].startswith("activo"):
+        return "Host sin servicios expuestos"
+    return "Desconocido"
 
 
 # Servicios/puertos de alto riesgo si están expuestos

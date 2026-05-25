@@ -7,6 +7,7 @@ Permite lanzar y detener el agente HADES desde la interfaz web sin exponer el si
 import os
 import sys
 import json
+import socket
 import secrets
 import subprocess
 import webbrowser
@@ -29,7 +30,27 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # Variables de estado del agente
 active_process = None
 log_buffer = []
-token_session = secrets.token_hex(16)
+
+# Token de sesión PERSISTENTE: se guarda en disco y se reutiliza entre reinicios.
+# Antes se regeneraba en cada arranque, lo que invalidaba las pestañas/URLs abiertas
+# (403 Invalid Token tras cada reinicio del servidor). Persistirlo lo evita.
+_TOKEN_FILE = os.path.join(_HERE, ".hades_token")
+def _load_or_create_token():
+    try:
+        if os.path.exists(_TOKEN_FILE):
+            t = open(_TOKEN_FILE, "r", encoding="utf-8").read().strip()
+            if len(t) >= 16:
+                return t
+    except Exception:
+        pass
+    t = secrets.token_hex(16)
+    try:
+        with open(_TOKEN_FILE, "w", encoding="utf-8") as f:
+            f.write(t)
+    except Exception:
+        pass
+    return t
+token_session = _load_or_create_token()
 
 system_metrics = {
     "cpu": 0.0,
@@ -41,94 +62,54 @@ system_metrics = {
 }
 
 def monitor_system_resources():
+    """CPU/RAM/disco vía psutil (rápido, cada ciclo). GPU/temp/ventilador vía
+    PowerShell sólo cada ~30 s (son caros y cambian lento); el resto del tiempo se
+    reutiliza el último valor o se estima desde la CPU. Así se evita la tormenta de
+    procesos PowerShell que saturaba el servidor y causaba timeouts."""
     global system_metrics
     import time
-    
-    # Initialize psutil
     try:
         import psutil
         psutil.cpu_percent()
     except Exception:
-        pass
-        
-    while True:
-        metrics = {
-            "cpu": 0.0,
-            "ram": 0.0,
-            "gpu": 0.0,
-            "disk": 0.0,
-            "temp": 0.0,
-            "fan": 0.0
-        }
-        # 1. CPU, RAM, Disk
-        try:
-            import psutil
-            metrics["cpu"] = psutil.cpu_percent(interval=0.2)
-            metrics["ram"] = psutil.virtual_memory().percent
-            metrics["disk"] = psutil.disk_usage('C:\\').percent
-        except Exception:
-            try:
-                cmd = "powershell -Command \"Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage; (Get-CimInstance Win32_OperatingSystem | % { (($_..TotalVisibleMemorySize - $_.FreePhysicalMemory) / $_.TotalVisibleMemorySize) * 100 }); (Get-CimInstance Win32_LogicalDisk -Filter \\\"DeviceID='C:'\\\" | % { (($_.Size - $_.FreeSpace) / $_.Size) * 100 })\""
-                res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                lines = res.stdout.strip().splitlines()
-                if len(lines) >= 3:
-                    metrics["cpu"] = float(lines[0].strip() or 0.0)
-                    metrics["ram"] = float(lines[1].strip() or 0.0)
-                    metrics["disk"] = float(lines[2].strip() or 0.0)
-            except Exception:
-                pass
+        psutil = None
 
-        # 2. GPU usage
+    heavy = {"gpu": 0.0, "temp": 0.0, "fan": 0.0}  # caché de métricas pesadas
+    loop = 0
+    while True:
+        cpu = ram = disk = 0.0
         try:
-            cmd_gpu = "powershell -Command \"$g = Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -ErrorAction SilentlyContinue; if ($g) { ($g.CounterSamples | Measure-Object -Property CookedValue -Max).Maximum } else { 0 }\""
-            res_gpu = subprocess.run(cmd_gpu, shell=True, capture_output=True, text=True)
-            val = res_gpu.stdout.strip()
-            if val:
-                val_clean = val.replace(',', '.')
-                metrics["gpu"] = round(float(val_clean), 1)
+            if psutil:
+                cpu = psutil.cpu_percent(interval=None)
+                ram = psutil.virtual_memory().percent
+                disk = psutil.disk_usage('C:\\').percent
         except Exception:
             pass
 
-        # 3. CPU / GPU Temperature
-        try:
-            cmd_temp = "powershell -Command \"$t = Get-CimInstance -Namespace root/wmi -ClassName MsAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue; if ($t) { ($t.CurrentTemperature - 273.15) / 10 } else { 0 }\""
-            res_temp = subprocess.run(cmd_temp, shell=True, capture_output=True, text=True)
-            val_temp = res_temp.stdout.strip()
-            if val_temp:
-                val_temp_clean = val_temp.replace(',', '.')
-                temp_val = float(val_temp_clean)
-                if temp_val > 0:
-                    metrics["temp"] = round(temp_val, 1)
-                else:
-                    metrics["temp"] = round(45.0 + (metrics["cpu"] * 0.25), 1)
-            else:
-                metrics["temp"] = round(45.0 + (metrics["cpu"] * 0.25), 1)
-        except Exception:
-            metrics["temp"] = 42.0
+        # GPU/temp/ventilador: PowerShell sólo cada 15 ciclos (~30 s)
+        if loop % 15 == 0:
+            try:
+                cmd_gpu = "powershell -NoProfile -Command \"$g = Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -ErrorAction SilentlyContinue; if ($g) { ($g.CounterSamples | Measure-Object -Property CookedValue -Max).Maximum } else { 0 }\""
+                val = subprocess.run(cmd_gpu, shell=True, capture_output=True, text=True, timeout=8).stdout.strip()
+                if val:
+                    heavy["gpu"] = round(float(val.replace(',', '.')), 1)
+            except Exception:
+                pass
+            try:
+                cmd_temp = "powershell -NoProfile -Command \"$t = Get-CimInstance -Namespace root/wmi -ClassName MsAcpi_ThermalZoneTemperature -ErrorAction SilentlyContinue; if ($t) { ($t.CurrentTemperature - 273.15) / 10 } else { 0 }\""
+                vt = subprocess.run(cmd_temp, shell=True, capture_output=True, text=True, timeout=8).stdout.strip()
+                heavy["temp"] = round(float(vt.replace(',', '.')), 1) if vt else 0.0
+            except Exception:
+                heavy["temp"] = 0.0
 
-        # 4. Fan Speed
-        try:
-            cmd_fan = "powershell -Command \"$f = Get-CimInstance -ClassName Win32_Fan -ErrorAction SilentlyContinue; if ($f) { $f.DesiredSpeed } else { 0 }\""
-            res_fan = subprocess.run(cmd_fan, shell=True, capture_output=True, text=True)
-            val_fan = res_fan.stdout.strip()
-            if val_fan:
-                val_fan_clean = val_fan.replace(',', '.')
-                fan_val = float(val_fan_clean)
-                if fan_val > 0:
-                    metrics["fan"] = fan_val
-                else:
-                    temp = metrics["temp"]
-                    simulated_fan = 1200 + max(0, (temp - 40) * 80)
-                    metrics["fan"] = round(min(3500, simulated_fan))
-            else:
-                temp = metrics["temp"]
-                simulated_fan = 1200 + max(0, (temp - 40) * 80)
-                metrics["fan"] = round(min(3500, simulated_fan))
-        except Exception:
-            metrics["fan"] = 1500
+        # Estimaciones cuando no hay lectura real (temp desde CPU, ventilador desde temp)
+        temp = heavy["temp"] if heavy["temp"] > 0 else round(45.0 + (cpu * 0.25), 1)
+        fan = round(min(3500, 1200 + max(0, (temp - 40) * 80)))
 
-        system_metrics = metrics
-        time.sleep(1.5)
+        system_metrics = {"cpu": cpu, "ram": ram, "gpu": heavy["gpu"],
+                          "disk": disk, "temp": temp, "fan": fan}
+        loop += 1
+        time.sleep(2)
 
 # Iniciar hilo de monitoreo en segundo plano
 threading.Thread(target=monitor_system_resources, daemon=True).start()
@@ -137,14 +118,175 @@ def add_log(msg):
     log_buffer.append(msg)
     print(f"[SERVER] {msg}")
 
+
+_rdns_cache = {}        # ip -> hostname ("" si no tiene PTR)
+_rdns_inflight = set()
+
+
+def _queue_rdns(ip):
+    """Resuelve el DNS inverso (PTR) de una IP en segundo plano y lo cachea.
+    No bloquea /api/graph: el hostname aparece en el siguiente ciclo de polling."""
+    if ip in _rdns_cache or ip in _rdns_inflight:
+        return
+    _rdns_inflight.add(ip)
+
+    def _resolve():
+        host = ""
+        try:
+            host = socket.gethostbyaddr(ip)[0]
+        except Exception:
+            host = ""
+        _rdns_cache[ip] = host
+        _rdns_inflight.discard(ip)
+
+    threading.Thread(target=_resolve, daemon=True).start()
+
+
+def _parse_traffic(summary):
+    """Extrae IPs externas y conexiones host→destino del resumen de tráfico Tshark."""
+    import re
+    externals, connections = [], []
+    if not summary:
+        return externals, connections
+    m = re.search(r"IPs externas detectadas:(.*?)(?:\n\s*Actividad|\Z)", summary, re.DOTALL)
+    if m:
+        # Extraer TODAS las IPs del bloque (incluye líneas con varias IPs separadas
+        # por comas). Sólo se descarta 0.0.0.0; el resto (incl. broadcast/multicast
+        # que el escaneo contó como externas) se muestran para que el mapa las liste
+        # todas, igual que el informe.
+        for ip in re.findall(r"\d{1,3}(?:\.\d{1,3}){3}", m.group(1)):
+            if ip and ip != "0.0.0.0":
+                externals.append(ip)
+    for line in summary.splitlines():
+        hm = re.match(r"\s*\[([\d.]+)\]:\s*(.+)", line)
+        if hm and "sin tráfico" not in hm.group(2).lower():
+            src = hm.group(1)
+            for conn in re.finditer(r"(\w+):(\S+)\s*→\s*([\d.]+)\s*\((\d+)x\)", hm.group(2)):
+                connections.append({"src": src, "proto": conn.group(1), "port": conn.group(2),
+                                    "dst": conn.group(3), "count": int(conn.group(4))})
+    return list(dict.fromkeys(externals)), connections
+
+
+def build_graph_data():
+    """Lee el INFORME_MAESTRO.md más reciente y devuelve datos estructurados
+    (hosts con SO, MAC, fabricante, puertos, tipo, riesgo, latencia, traceroute,
+    + IPs externas y conexiones del tráfico) para el mapa de red 3D."""
+    import re
+    from collections import Counter
+    result = {"status": "idle", "subnet": "", "generated": "", "router_ip": "",
+              "hosts": [], "externals": [], "connections": [], "traffic": {}, "stats": {}}
+    informes = os.path.join(_HERE, "informes")
+    if not os.path.isdir(informes):
+        return result
+    candidates = []
+    for name in os.listdir(informes):
+        f = os.path.join(informes, name, "INFORME_MAESTRO.md")
+        if os.path.isfile(f):
+            candidates.append((os.path.getmtime(f), f))
+    if not candidates:
+        return result
+    candidates.sort(reverse=True)
+    master = candidates[0][1]
+    try:
+        from hades_report_docx import parse_master_report
+        with open(master, "r", encoding="utf-8") as fh:
+            data = parse_master_report(fh.read())
+    except Exception as e:
+        result["status"] = "error"
+        result["error"] = str(e)
+        return result
+
+    hosts = data.get("hosts", [])
+    audited = {h["ip"] for h in hosts}
+    # Incluir IPs descubiertas en FASE 1 aunque aún no estén auditadas (para que
+    # el mapa muestre la red en cuanto se descubre, sin esperar a la FASE 4).
+    for ip in re.findall(r"(\d{1,3}(?:\.\d{1,3}){3})", data.get("ips_raw", "")):
+        if ip not in audited:
+            hosts.append({"ip": ip, "status": "descubierto",
+                          "device_type": "Router / Gateway" if ip.endswith(".1") else "Descubierto (sin auditar)",
+                          "risk": "INFORMATIVO", "ports": [], "os": "", "mac": "", "vendor": "",
+                          "cves": [], "nuclei": [], "latency": "", "traceroute": [], "ai": ""})
+            audited.add(ip)
+
+    router_ip = next((h["ip"] for h in hosts if h["ip"].endswith(".1")), "")
+    externals, connections = _parse_traffic(data.get("traffic_summary", ""))
+
+    # DNS inverso (PTR) de cada IP externa → dominio/host al que pertenece
+    hostnames = {}
+    for ip in set(externals) | {cn["dst"] for cn in connections}:
+        if ip in _rdns_cache:
+            hostnames[ip] = _rdns_cache[ip]
+        else:
+            _queue_rdns(ip)        # resuelve en segundo plano; aparece en el próximo poll
+            hostnames[ip] = ""
+
+    c = Counter(h["risk"] for h in hosts)
+    result.update({
+        "status": "ok",
+        "subnet": data.get("subnet", ""),
+        "generated": data.get("date", ""),
+        "router_ip": router_ip,
+        "hosts": hosts,
+        "externals": externals,
+        "connections": connections,
+        "hostnames": hostnames,
+        "traffic": {"summary": data.get("traffic_summary", "")},
+        "stats": {
+            "total": len(hosts),
+            "activos": sum(1 for h in hosts if h["status"].startswith("activo")),
+            "externos": len(externals),
+            "puertos_abiertos": sum(len(h["ports"]) for h in hosts),
+            "riesgo": {k: c.get(k, 0) for k in ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]},
+        },
+    })
+    return result
+
+
 class SecureHadesHandler(SimpleHTTPRequestHandler):
+    # HTTP/1.1 con keep-alive: el navegador reutiliza unas pocas conexiones en lugar
+    # de abrir cientos de conexiones cortas (una por cada poll), que saturaban el
+    # servidor en loopback de Windows y lo dejaban sin responder. Requiere enviar
+    # Content-Length en TODAS las respuestas (ver _send_json / _send_bytes).
+    protocol_version = "HTTP/1.1"
+    timeout = 30
+
     def __init__(self, *args, **kwargs):
         # Establecer la carpeta raíz para servir archivos estáticos
         super().__init__(*args, directory=_HERE, **kwargs)
 
+    def _send_json(self, obj, code=200):
+        body = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def _send_bytes(self, body, content_type, code=200):
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
     def log_message(self, format, *args):
         # Silenciar logs estándar en terminal para evitar ruido
         pass
+
+    def end_headers(self):
+        # Sin caché: el dashboard es local y evoluciona; así el navegador siempre
+        # recibe la versión actual de los .js/.html sin necesidad de recarga forzada.
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        super().end_headers()
 
     def check_token(self):
         """Valida que la petición incluya el token de sesión correcto."""
@@ -167,13 +309,8 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             if not self.check_token():
                 self.send_error(403, "Forbidden: Invalid Token")
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            
             global log_buffer
-            self.wfile.write(json.dumps({"logs": log_buffer}).encode('utf-8'))
+            self._send_json({"logs": log_buffer})
             log_buffer = []  # Limpiar buffer tras lectura
             return
 
@@ -182,15 +319,8 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             if not self.check_token():
                 self.send_error(403, "Forbidden: Invalid Token")
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            
             is_running = active_process is not None and active_process.poll() is None
-            self.wfile.write(json.dumps({
-                "status": "running" if is_running else "idle",
-                "port": PORT
-            }).encode('utf-8'))
+            self._send_json({"status": "running" if is_running else "idle", "port": PORT})
             return
 
         # 2.5 API: Obtener recursos del sistema
@@ -198,10 +328,19 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             if not self.check_token():
                 self.send_error(403, "Forbidden: Invalid Token")
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(system_metrics).encode('utf-8'))
+            self._send_json(system_metrics)
+            return
+
+        # 2.6 API: Datos estructurados de la red para el mapa 3D
+        if path == "/api/graph":
+            if not self.check_token():
+                self.send_error(403, "Forbidden: Invalid Token")
+                return
+            try:
+                graph = build_graph_data()
+            except Exception as e:
+                graph = {"status": "error", "error": str(e), "hosts": []}
+            self._send_json(graph)
             return
 
         # 3. Servir archivos estáticos estándar (con inyección de Token de seguridad)
@@ -209,21 +348,18 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         if unquoted_path in ["/", "/index.html", "/agente HADES.html"]:
             html_path = os.path.join(_HERE, "agente HADES.html")
             if os.path.exists(html_path):
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.end_headers()
                 with open(html_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 # Inyectar el token de sesión dinámico en el HTML para uso del JavaScript
                 injected = content.replace("const HADES_SECURITY_TOKEN = '';", f"const HADES_SECURITY_TOKEN = '{token_session}';")
-                self.wfile.write(injected.encode('utf-8'))
+                self._send_bytes(injected, "text/html; charset=utf-8")
                 return
 
         # Llamar al manejador por defecto de SimpleHTTPRequestHandler para servir CSS/JS/Imágenes
         super().do_GET()
 
     def do_POST(self):
-        global active_process
+        global active_process, log_buffer
         if not self.check_token():
             self.send_error(403, "Forbidden: Invalid Token")
             return
@@ -234,10 +370,7 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         # 1. API para lanzar el agente
         if path == "/api/scan":
             if active_process is not None and active_process.poll() is None:
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": "El agente ya se encuentra activo."}).encode('utf-8'))
+                self._send_json({"error": "El agente ya se encuentra activo."}, code=400)
                 return
 
             # Leer parámetros del cuerpo de la petición
@@ -299,10 +432,7 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
 
             threading.Thread(target=run_subprocess, daemon=True).start()
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"message": "Escaneo iniciado correctamente."}).encode('utf-8'))
+            self._send_json({"message": "Escaneo iniciado correctamente."})
             return
 
         # 2. API para parada forzada de emergencia — TERMINACIÓN INMEDIATA
@@ -355,21 +485,27 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
 
-            add_log("[EMERGENCIA] ✅ PARADA DE EMERGENCIA completada. Sistema en estado seguro.")
+            # RESET A CERO: estado limpio para empezar de nuevo sin arrastrar errores.
+            active_process = None
+            log_buffer = ["[RESET] Agente detenido y estado reiniciado a CERO. Listo para una nueva auditoría."]
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(json.dumps({"message": "⚡ PARADA DE EMERGENCIA ejecutada. Todos los procesos han sido terminados de inmediato."}).encode('utf-8'))
+            self._send_json({
+                "message": "Agente detenido. Estado reiniciado a CERO — listo para trabajar desde cero.",
+                "reset": True
+            })
             return
 
+class HadesHTTPServer(ThreadingHTTPServer):
+    # Cola de conexiones grande (por defecto 5): el navegador abre muchas conexiones
+    # concurrentes (polling de /api/logs, /api/status, /api/sysinfo, /api/graph + la
+    # librería de 1.3MB). Con backlog 5 se desbordaba y Windows descartaba los SYN
+    # → ERR_CONNECTION_TIMED_OUT. 128 absorbe las ráfagas del dashboard.
+    request_queue_size = 128
+    daemon_threads = True
+
+
 def start_server():
-    # ThreadingHTTPServer: cada petición se atiende en su propio hilo.
-    # Imprescindible para un dashboard que hace polling concurrente de
-    # /api/sysinfo, /api/logs y /api/status. Con el HTTPServer monohilo
-    # anterior, una sola petición lenta congelaba TODO el panel.
-    server = ThreadingHTTPServer(('127.0.0.1', PORT), SecureHadesHandler)
+    server = HadesHTTPServer(('127.0.0.1', PORT), SecureHadesHandler)
     server.daemon_threads = True
     url = f"http://127.0.0.1:{PORT}/index.html?token={token_session}"
     

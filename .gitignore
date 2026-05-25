@@ -2,9 +2,10 @@
 # Contienen el reconocimiento real de la red (IPs, MACs, puertos, SO, informes).
 informes/
 
-# ─── Temporales / logs de ejecución ──────────────────────────────────────────
+# ─── Temporales / logs / token de sesión ─────────────────────────────────────
 *.log
 .scan_token
+.hades_token
 *.tmp
 
 # ─── Python ───────────────────────────────────────────────────────────────────
@@ -18,3 +19,7 @@ venv/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Build temporal del mapa (esbuild)
+_mapbuild/
+node_modules/

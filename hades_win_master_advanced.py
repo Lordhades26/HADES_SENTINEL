@@ -154,7 +154,7 @@ class HadesMCP:
     # + detección de SO, con reintentos y timeout por host para que un host lento o
     # caído no bloquee la auditoría. Las vulnerabilidades web las cubre Nuclei, por lo
     # que se omiten los lentos/inestables scripts NSE '--script vuln'.
-    def nmap_scan(self, ip, flags="-T4 -sV -O --osscan-limit --max-retries 2 --host-timeout 120s"):
+    def nmap_scan(self, ip, flags="-T4 -sV -O --osscan-limit --traceroute --max-retries 2 --host-timeout 120s"):
         if not os.path.exists(WIN_PATHS["nmap"]):
             return f"[NMAP] Binario no encontrado en {WIN_PATHS['nmap']}"
         log(f"Nmap deep scan → {ip}")

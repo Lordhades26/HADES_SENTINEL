@@ -103,7 +103,7 @@ def parse_tshark_output(raw, active_ips):
 
     if external_ips:
         lines.append("  IPs externas detectadas:")
-        for eip in sorted(external_ips)[:20]:
+        for eip in sorted(external_ips)[:200]:   # listar prácticamente todas (no solo 20)
             lines.append(f"    - {eip}")
 
     # Conexiones por host de la red local
