@@ -19,11 +19,12 @@ Uso CLI:
 import os
 import re
 import sys
+import json
 from datetime import datetime
 
 try:
     from docx import Document
-    from docx.shared import Pt, RGBColor, Inches
+    from docx.shared import Pt, RGBColor, Inches, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
@@ -57,7 +58,40 @@ BRANDING = {
     "secondary": (0x18, 0x9C, 0xD4),   # azul eléctrico (ojos/circuitos)
     "accent":    (0xCE, 0x3A, 0x16),   # rojo cyber (glow derecho / riesgos)
     "light":     (0xD7, 0xE6, 0xF2),   # fondo de cabeceras de tabla
+    # Pie de firma del informe (autor que certifica) + QR a sus acreditaciones.
+    # DATOS PERSONALES: NO se versionan. Se quedan vacíos en el repo y se cargan en
+    # tiempo de ejecución desde 'signature.local.json' (en .gitignore) si existe.
+    # Sin ese archivo local, el informe se genera SIN pie de firma.
+    "signature_name":       "",
+    "signature_title":      "",
+    "signature_qr":         "",
+    "signature_qr_caption": "",
 }
+
+
+def _load_local_signature():
+    """Carga el pie de firma (nombre, cargo, QR) desde 'signature.local.json' — un
+    archivo LOCAL no versionado (privacidad: no se sube a GitHub). Estructura:
+        {"name": "...", "title": "...", "qr": "qr_credly.png", "caption": "..."}
+    'qr' puede ser un nombre de archivo dentro de assets/ o una ruta absoluta.
+    Si el archivo no existe, BRANDING mantiene los campos vacíos y no se firma."""
+    try:
+        path = os.path.join(_BRAND_DIR, "signature.local.json")
+        if not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        BRANDING["signature_name"]  = cfg.get("name", "") or ""
+        BRANDING["signature_title"] = cfg.get("title", "") or ""
+        BRANDING["signature_qr_caption"] = cfg.get("caption", "") or ""
+        qr = cfg.get("qr", "") or ""
+        if qr:
+            BRANDING["signature_qr"] = qr if os.path.isabs(qr) else os.path.join(_BRAND_DIR, "assets", qr)
+    except Exception:
+        pass   # firma opcional: cualquier error en el JSON local no rompe el informe
+
+
+_load_local_signature()
 
 # Niveles de riesgo (determinista) y sus colores
 RISK_COLORS = {
@@ -538,6 +572,65 @@ def _render_traffic(doc, summary):
             _set_cell_text(row[1], conns, size=9)
 
 
+def _signature_block(doc):
+    """Pie de firma al final del informe: nombre y cargo CENTRADOS (Times New Roman 14)
+    y, a la derecha en la misma banda horizontal, el QR que enlaza a las acreditaciones
+    (Credly). Se usa una tabla SIN bordes de 3 columnas [espaciador | firma | QR] con
+    layout fijo (autofit=False): así la firma queda centrada en la página y el QR pegado
+    al margen derecho."""
+    name    = BRANDING.get("signature_name", "")
+    title   = BRANDING.get("signature_title", "")
+    qr_path = BRANDING.get("signature_qr", "")
+    # Sin datos de firma locales (p. ej. clon del repo sin signature.local.json) →
+    # no se añade pie de firma: el informe queda sin nombre ni QR.
+    if not name and not (qr_path and os.path.exists(qr_path)):
+        return
+
+    doc.add_paragraph()
+    doc.add_paragraph()
+    side    = Cm(3.6)   # ancho de las columnas laterales (zona del QR)
+
+    tbl = doc.add_table(rows=1, cols=3)   # sin .style ⇒ sin bordes visibles
+    tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    tbl.autofit = False                   # layout de columnas FIJO (no recolocar)
+    cells = tbl.rows[0].cells
+    cells[0].width = side
+    cells[1].width = Cm(9.4)
+    cells[2].width = side
+
+    # ── Columna central: firma centrada ──
+    sc = cells[1]
+    p_name = sc.paragraphs[0]
+    p_name.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_name.paragraph_format.line_spacing = 1.0
+    rn = p_name.add_run(name)
+    rn.bold = True; rn.font.name = "Times New Roman"; rn.font.size = Pt(14)
+    rn.font.color.rgb = _rgb(BRANDING["primary"])
+    p_title = sc.add_paragraph()
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_title.paragraph_format.line_spacing = 1.0
+    rt = p_title.add_run(title)
+    rt.font.name = "Times New Roman"; rt.font.size = Pt(14)
+    rt.font.color.rgb = _rgb(BRANDING["secondary"])
+
+    # ── Columna derecha: QR de acreditaciones (Credly) ──
+    qc = cells[2]
+    qp = qc.paragraphs[0]
+    qp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    qp.paragraph_format.line_spacing = 1.0
+    if qr_path and os.path.exists(qr_path):
+        try:
+            qp.add_run().add_picture(qr_path, width=Cm(3.0))
+        except Exception:
+            qp.add_run("[QR de acreditaciones no disponible]")
+        cap = qc.add_paragraph()
+        cap.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        cap.paragraph_format.line_spacing = 1.0
+        rc = cap.add_run(BRANDING.get("signature_qr_caption", ""))
+        rc.italic = True; rc.font.name = "Times New Roman"; rc.font.size = Pt(8)
+        rc.font.color.rgb = _rgb(BRANDING["secondary"])
+
+
 def build_iso27001_docx(data, output_path):
     doc = Document()
 
@@ -551,6 +644,13 @@ def build_iso27001_docx(data, output_path):
 
     # Cabecera y pie de página
     section = doc.sections[0]
+    # Tamaño de hoja "Oficio México" (21,59 × 33,98 cm) con márgenes personalizados.
+    section.page_width  = Cm(21.59)
+    section.page_height = Cm(33.98)
+    section.top_margin    = Cm(2.5)
+    section.bottom_margin = Cm(2.5)
+    section.left_margin   = Cm(3.5)
+    section.right_margin  = Cm(1.5)
     hp = section.header.paragraphs[0]
     hp.text = f"{BRANDING['company_name']}  ·  {BRANDING['confidentiality']}"
     hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -744,9 +844,10 @@ def build_iso27001_docx(data, output_path):
                 _set_cell_text(row[2], p["service"], size=9)
                 _set_cell_text(row[3], p["version"] or "—", size=9)
         if h["ai"]:
-            ap = doc.add_paragraph(); r = ap.add_run("Análisis consultivo (IA local):")
+            ap = doc.add_paragraph(); r = ap.add_run("Análisis Consultivo:")
             r.bold = True; r.font.name = "Times New Roman"; r.font.color.rgb = _rgb(BRANDING["secondary"])
-            _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", h["ai"])[:3000])
+            bp = _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", h["ai"])[:3000])
+            bp.alignment = WD_ALIGN_PARAGRAPH.LEFT
         doc.add_paragraph()
 
     _heading(doc, "Anexo — Mapeo a Controles ISO/IEC 27001 (Anexo A)", 2)
@@ -765,7 +866,10 @@ def build_iso27001_docx(data, output_path):
         if data.get("traffic_ai"):
             r = doc.add_paragraph().add_run("Interpretación (IA local):")
             r.bold = True; r.font.name = "Times New Roman"; r.font.color.rgb = _rgb(BRANDING["secondary"])
-            _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", data["traffic_ai"])[:3000])
+            tp = _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", data["traffic_ai"])[:3000])
+            tp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+    _signature_block(doc)
 
     doc.save(output_path)
     return output_path

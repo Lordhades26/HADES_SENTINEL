@@ -2,6 +2,12 @@
 # Contienen el reconocimiento real de la red (IPs, MACs, puertos, SO, informes).
 informes/
 
+# ─── Pie de firma personal — DATOS PERSONALES, NO PUBLICAR ───────────────────
+# Nombre, cargo y QR de acreditaciones del analista. Se quedan SOLO en local;
+# el informe en GitHub se genera sin firma. (hades_report_docx los carga si existen.)
+signature.local.json
+assets/qr_credly.png
+
 # ─── Temporales / logs / token de sesión ─────────────────────────────────────
 *.log
 .scan_token

@@ -1220,13 +1220,22 @@ Esperando órdenes...</div>
                 setStepActive(5);
             }
             // Paso 6: Consolidación de Reporte / Fin
-            else if (lowerMsg.includes("fase 5 — informe maestro") || lowerMsg.includes("auditoria completada con exito") || lowerMsg.includes("vigilancia completada")) {
+            else if (lowerMsg.includes("fase 5 — informe maestro") || lowerMsg.includes("auditoria completada con exito") || (lowerMsg.includes("vigilancia") && lowerMsg.includes("completada"))) {
                 setStepCompleted(5);
                 setStepCompleted(6);
             }
             
-            // Si el estado pasa a IDLE desde RUNNING en general
-            if (lowerMsg.includes("agente finalizado") || lowerMsg.includes("parada forzada ejecutado")) {
+            // Cierre del agente. Si finalizó con éxito (código de salida 0) marcamos
+            // TODO el flujo como completado: red de seguridad por si algún log de la
+            // fase final no coincidió. Si terminó con error o por parada de emergencia,
+            // sólo limpiamos el estado "activo" (se conserva lo ya completado).
+            if (lowerMsg.includes("agente finalizado")) {
+                if (/salida:\s*0\s*\)/.test(lowerMsg)) {
+                    setStepCompleted(6);
+                } else {
+                    resetTimelineToIdle();
+                }
+            } else if (lowerMsg.includes("parada forzada ejecutado")) {
                 resetTimelineToIdle();
             }
         }

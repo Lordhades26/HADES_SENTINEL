@@ -288,14 +288,17 @@ class HadesMCP:
         # IA. En su lugar llamamos directo: si Ollama está caído, la conexión se
         # rechaza al instante (se captura abajo); si está cargando el modelo (4.7GB),
         # la petición simplemente espera al timeout amplio (300s) y responde.
-        # num_predict acota la respuesta (genera rápido); keep_alive mantiene el
-        # modelo cargado durante todo el escaneo.
+        # num_predict acota la respuesta. Se subió de 450 → 1536: con 450 tokens los
+        # análisis estructurados se cortaban a media frase (la "Interpretación IA" del
+        # tráfico quedaba incompleta en la sección 5 — MITIGACIÓN). 1536 da margen para
+        # que el modelo CIERRE su respuesta por sí mismo (emite EOS mucho antes en la
+        # práctica, así que no penaliza la velocidad real). keep_alive lo mantiene caliente.
         payload = json.dumps({
             "model": model,
             "prompt": prompt,
             "stream": False,
             "keep_alive": "30m",
-            "options": {"num_predict": 450, "temperature": 0.35}
+            "options": {"num_predict": 1536, "temperature": 0.35}
         }).encode()
         req = urllib.request.Request(
             WIN_PATHS["ollama"], data=payload,
