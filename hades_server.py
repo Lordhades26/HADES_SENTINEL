@@ -61,6 +61,129 @@ system_metrics = {
     "fan": 0.0
 }
 
+# Estado REAL de Ollama (no simulado). Lo actualiza monitor_ollama() consultando
+# directamente la API local de Ollama (http://127.0.0.1:11434). El frontend lo
+# consume vía GET /api/ollama. Los campos tokens_per_second y total_duration_ms
+# vienen del archivo .ollama_last_metrics.json que escribe hades_local.py tras
+# cada llamada real a /api/generate.
+def _normalize_ollama_host(raw):
+    # Ollama's propia convención para OLLAMA_HOST es "host" o "host:port" (sin
+    # esquema). urllib exige un URL completo, así que normalizamos: añadimos
+    # http:// si falta, y :11434 si no se especificó puerto. Acepta también un
+    # URL completo ya formado.
+    s = (raw or "").strip()
+    if not s:
+        return "http://127.0.0.1:11434"
+    if "://" not in s:
+        s = "http://" + s
+    try:
+        u = urlparse(s)
+        host = u.hostname or "127.0.0.1"
+        # 0.0.0.0 es una dirección de bind del lado servidor; como cliente no es
+        # ruteable en Windows. La convertimos al loopback.
+        if host == "0.0.0.0":
+            host = "127.0.0.1"
+        port = u.port or 11434
+        scheme = u.scheme or "http"
+        return f"{scheme}://{host}:{port}"
+    except Exception:
+        return "http://127.0.0.1:11434"
+
+OLLAMA_HOST = _normalize_ollama_host(os.environ.get("OLLAMA_HOST"))
+_OLLAMA_METRICS_FILE = os.path.join(_HERE, ".ollama_last_metrics.json")
+ollama_metrics = {
+    "connected": False,
+    "version": None,
+    "model_name": None,
+    "vram_mb": 0,
+    "size_mb": 0,
+    "expires_in_seconds": 0,
+    "loaded_models": 0,
+    "tokens_per_second": 0.0,
+    "total_duration_ms": 0,
+    "last_metric_age_seconds": None,
+    "error": None,
+}
+
+def _http_get_json(url, timeout=2.5):
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        return json.loads(res.read().decode("utf-8"))
+
+def monitor_ollama():
+    """Polling cada 3 s al API local de Ollama para reflejar el estado REAL del
+    motor de IA en el dashboard. Si el host no responde marca connected=False y
+    los demás campos se ponen a cero. Es defensivo: cualquier excepción se
+    encapsula en ollama_metrics['error']."""
+    global ollama_metrics
+    import time
+    while True:
+        snap = {
+            "connected": False,
+            "version": None,
+            "model_name": None,
+            "vram_mb": 0,
+            "size_mb": 0,
+            "expires_in_seconds": 0,
+            "loaded_models": 0,
+            "tokens_per_second": 0.0,
+            "total_duration_ms": 0,
+            "last_metric_age_seconds": None,
+            "error": None,
+        }
+        try:
+            ver = _http_get_json(f"{OLLAMA_HOST}/api/version", timeout=2.0)
+            snap["connected"] = True
+            snap["version"] = ver.get("version")
+        except Exception as e:
+            snap["error"] = f"version: {e.__class__.__name__}"
+
+        if snap["connected"]:
+            try:
+                ps = _http_get_json(f"{OLLAMA_HOST}/api/ps", timeout=2.5)
+                models = ps.get("models", []) or []
+                snap["loaded_models"] = len(models)
+                if models:
+                    # Tomar el primero (modelo activo). Sumar VRAM total y tamaño.
+                    primary = models[0]
+                    snap["model_name"] = primary.get("name") or primary.get("model")
+                    snap["vram_mb"] = int(sum(m.get("size_vram", 0) for m in models) / (1024 * 1024))
+                    snap["size_mb"] = int(sum(m.get("size", 0) for m in models) / (1024 * 1024))
+                    expires_at = primary.get("expires_at")
+                    if expires_at:
+                        # expires_at es ISO 8601; calcular segundos hasta expiración
+                        try:
+                            from datetime import datetime, timezone
+                            # Ollama emite formato "2024-01-01T00:00:00.000000000Z" — recortar a microsegundos
+                            ea = expires_at.rstrip("Z")
+                            if "." in ea:
+                                head, tail = ea.split(".", 1)
+                                tail = tail[:6]  # microsegundos máx
+                                ea = f"{head}.{tail}"
+                            dt = datetime.fromisoformat(ea).replace(tzinfo=timezone.utc)
+                            delta = (dt - datetime.now(timezone.utc)).total_seconds()
+                            snap["expires_in_seconds"] = max(0, int(delta))
+                        except Exception:
+                            snap["expires_in_seconds"] = 0
+            except Exception as e:
+                snap["error"] = f"ps: {e.__class__.__name__}"
+
+        # Inyectar métricas escritas por hades_local.py tras cada inferencia real
+        try:
+            if os.path.exists(_OLLAMA_METRICS_FILE):
+                with open(_OLLAMA_METRICS_FILE, "r", encoding="utf-8") as f:
+                    last = json.load(f)
+                snap["tokens_per_second"] = float(last.get("tokens_per_second", 0.0))
+                snap["total_duration_ms"] = int(last.get("total_duration_ms", 0))
+                ts = float(last.get("timestamp", 0.0))
+                if ts > 0:
+                    snap["last_metric_age_seconds"] = max(0, int(time.time() - ts))
+        except Exception:
+            pass
+
+        ollama_metrics = snap
+        time.sleep(3)
+
 def monitor_system_resources():
     """CPU/RAM/disco vía psutil (rápido, cada ciclo). GPU/temp/ventilador vía
     PowerShell sólo cada ~30 s (son caros y cambian lento); el resto del tiempo se
@@ -113,6 +236,7 @@ def monitor_system_resources():
 
 # Iniciar hilo de monitoreo en segundo plano
 threading.Thread(target=monitor_system_resources, daemon=True).start()
+threading.Thread(target=monitor_ollama, daemon=True).start()
 
 def add_log(msg):
     log_buffer.append(msg)
@@ -331,6 +455,14 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             self._send_json(system_metrics)
             return
 
+        # 2.55 API: Estado REAL de Ollama (modelo cargado, VRAM, tokens/s)
+        if path == "/api/ollama":
+            if not self.check_token():
+                self.send_error(403, "Forbidden: Invalid Token")
+                return
+            self._send_json(ollama_metrics)
+            return
+
         # 2.6 API: Datos estructurados de la red para el mapa 3D
         if path == "/api/graph":
             if not self.check_token():
@@ -445,7 +577,7 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
                 add_log(f"[EMERGENCIA] Ejecutando taskkill /f /t sobre PID {pid} y todos sus procesos hijos...")
                 try:
                     # En Windows, /f = forzado, /t = árbol completo (mata hijos también)
-                    result = subprocess.run(
+                    subprocess.run(
                         f"taskkill /f /t /pid {pid}",
                         shell=True, capture_output=True, text=True, timeout=5
                     )
@@ -510,10 +642,10 @@ def start_server():
     url = f"http://127.0.0.1:{PORT}/index.html?token={token_session}"
     
     print("=" * 70)
-    print(f"   HADES SECURITY COMMAND CENTER SERVER ACTIVO")
+    print("   HADES SECURITY COMMAND CENTER SERVER ACTIVO")
     print(f"   Puerto: {PORT}")
     print(f"   Token de sesión: {token_session}")
-    print(f"   Abriendo navegador web de forma segura en:")
+    print("   Abriendo navegador web de forma segura en:")
     print(f"   {url}")
     print("=" * 70)
     

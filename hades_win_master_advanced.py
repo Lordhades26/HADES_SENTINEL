@@ -4,7 +4,7 @@ HADES WIN MASTER ADVANCED v2.0
 Motor principal del agente HADES para Windows.
 Integra: Nmap (ARP), Nuclei (web vuln), Tshark, OpenSSL, cURL, Ollama IA.
 """
-import json, subprocess, sys, shutil, os, re, time, urllib.request, signal, threading
+import json, subprocess, sys, os, re, time, urllib.request, signal, threading
 from datetime import datetime
 
 # Asegurar UTF-8 en stdout/stderr SIEMPRE (este módulo usa flechas '→' y emojis en
@@ -281,6 +281,32 @@ class HadesMCP:
         except Exception:
             return False
 
+    def _record_ollama_metrics(self, model, data):
+        """Extrae métricas REALES de la respuesta de Ollama (campos estándar de
+        /api/generate con stream=false) y las persiste en .ollama_last_metrics.json
+        para que el panel Ollama IA del dashboard muestre tokens/s reales tras cada
+        inferencia del agente de vigilancia. eval_count / eval_duration → tokens/s."""
+        try:
+            eval_count = int(data.get("eval_count", 0) or 0)
+            eval_duration_ns = int(data.get("eval_duration", 0) or 0)
+            total_duration_ns = int(data.get("total_duration", 0) or 0)
+            tps = (eval_count / (eval_duration_ns / 1e9)) if eval_duration_ns > 0 else 0.0
+            metrics = {
+                "model": model,
+                "tokens_per_second": round(tps, 2),
+                "eval_count": eval_count,
+                "eval_duration_ms": int(eval_duration_ns / 1e6),
+                "total_duration_ms": int(total_duration_ns / 1e6),
+                "prompt_eval_count": int(data.get("prompt_eval_count", 0) or 0),
+                "timestamp": time.time(),
+            }
+            metrics_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ollama_last_metrics.json")
+            with open(metrics_path, "w", encoding="utf-8") as f:
+                json.dump(metrics, f)
+            print(f"[OLLAMA_METRICS] model={model} tps={metrics['tokens_per_second']} eval={eval_count} total_ms={metrics['total_duration_ms']}")
+        except Exception as e:
+            print(f"[OLLAMA_METRICS] error registrando métricas: {e}")
+
     def ai_analysis(self, prompt, model="HADES-AUTO:latest", retries=2, timeout=360):
         # El análisis IA DEBE estar presente en el informe. NO usamos pre-chequeo de
         # disponibilidad: cuando Ollama está OCUPADO cargando/generando el modelo,
@@ -308,7 +334,9 @@ class HadesMCP:
         for i in range(retries + 1):
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as res:
-                    txt = json.loads(res.read().decode()).get("response", "").strip()
+                    data = json.loads(res.read().decode())
+                    self._record_ollama_metrics(model, data)
+                    txt = data.get("response", "").strip()
                     return txt if txt else "[IA] Sin respuesta del modelo."
             except Exception as e:
                 last = str(e)

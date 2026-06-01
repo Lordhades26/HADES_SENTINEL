@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-import os, sys, json, time, signal, shutil, subprocess, argparse, re
+import os, sys, json, time, shutil, subprocess, argparse
 from datetime import datetime
-from pathlib import Path
 
 HADES_VERSION = "1.3.0"
 
@@ -86,9 +85,37 @@ class HadesEngine:
             import urllib.request
             req = urllib.request.Request(self.ollama_url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
             with urllib.request.urlopen(req, timeout=30) as res:
-                return json.loads(res.read().decode('utf-8')).get("response", "")
+                data = json.loads(res.read().decode('utf-8'))
+            self._record_ollama_metrics(model, data)
+            return data.get("response", "")
         except Exception as e:
             return f"Error IA: {str(e)}"
+
+    def _record_ollama_metrics(self, model, data):
+        """Extrae métricas REALES de la respuesta de Ollama (campos estándar de
+        /api/generate con stream=false) y las persiste para que el dashboard las
+        muestre en el panel Ollama IA. eval_count / eval_duration → tokens/s real."""
+        try:
+            eval_count = int(data.get("eval_count", 0) or 0)
+            eval_duration_ns = int(data.get("eval_duration", 0) or 0)
+            total_duration_ns = int(data.get("total_duration", 0) or 0)
+            tps = (eval_count / (eval_duration_ns / 1e9)) if eval_duration_ns > 0 else 0.0
+            metrics = {
+                "model": model,
+                "tokens_per_second": round(tps, 2),
+                "eval_count": eval_count,
+                "eval_duration_ms": int(eval_duration_ns / 1e6),
+                "total_duration_ms": int(total_duration_ns / 1e6),
+                "prompt_eval_count": int(data.get("prompt_eval_count", 0) or 0),
+                "timestamp": time.time(),
+            }
+            metrics_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".ollama_last_metrics.json")
+            with open(metrics_path, "w", encoding="utf-8") as f:
+                json.dump(metrics, f)
+            # Log visible en la consola del dashboard para trazabilidad
+            print(f"[OLLAMA_METRICS] model={model} tps={metrics['tokens_per_second']} eval={eval_count} total_ms={metrics['total_duration_ms']}")
+        except Exception as e:
+            print(f"[OLLAMA_METRICS] error registrando métricas: {e}")
 
     def quick_scan(self, target):
         log(f"Iniciando escaneo rápido en {target}...", "HADES")

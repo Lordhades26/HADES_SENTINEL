@@ -12,6 +12,9 @@ assets/qr_credly.png
 *.log
 .scan_token
 .hades_token
+.ollama_last_metrics.json
+hades_run.out
+hades_run.err
 *.tmp
 
 # ─── Python ───────────────────────────────────────────────────────────────────

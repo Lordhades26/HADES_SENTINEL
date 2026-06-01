@@ -718,6 +718,100 @@
             box-shadow: 0 0 4px #ff9f00;
         }
 
+        /* =====================================================
+           MINIMIZE / RESTORE SYSTEM
+           Permite minimizar todos los cuadros del dashboard
+           y restaurarlos desde el dock flotante inferior derecho.
+           ===================================================== */
+        .panel-min-btn {
+            width: 22px;
+            height: 22px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(255, 159, 0, 0.35);
+            border-radius: 4px;
+            background: rgba(255, 159, 0, 0.08);
+            color: #ff9f00;
+            font-size: 0.95rem;
+            font-family: var(--font-mono);
+            cursor: pointer;
+            transition: all 0.25s ease;
+            line-height: 1;
+            flex-shrink: 0;
+            margin-left: 8px;
+            padding: 0 0 4px 0;
+            font-weight: bold;
+        }
+        .panel-min-btn:hover {
+            background: #ff9f00;
+            color: #000;
+            box-shadow: 0 0 10px rgba(255, 159, 0, 0.5);
+        }
+
+        .panel.minimized,
+        .mini-panel.minimized {
+            display: none !important;
+        }
+
+        #minimizedDock {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            display: none;
+            flex-wrap: wrap;
+            gap: 8px;
+            max-width: 60vw;
+            z-index: 900;
+            padding: 10px 12px;
+            background: rgba(5, 15, 8, 0.94);
+            border: 1px solid rgba(0, 255, 102, 0.3);
+            border-radius: 10px;
+            backdrop-filter: blur(14px);
+            box-shadow: 0 0 16px rgba(0, 255, 102, 0.15), 0 6px 24px rgba(0,0,0,0.7);
+            font-family: var(--font-mono);
+        }
+        #minimizedDock.show {
+            display: flex;
+        }
+        #minimizedDock::before {
+            content: "▢  CUADROS MINIMIZADOS";
+            display: block;
+            width: 100%;
+            font-size: 0.6rem;
+            color: rgba(136, 192, 152, 0.75);
+            letter-spacing: 2px;
+            margin-bottom: 2px;
+        }
+
+        .dock-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border: 1px solid rgba(0, 255, 102, 0.3);
+            background: rgba(0, 255, 102, 0.07);
+            color: var(--neon-accent);
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .dock-chip:hover {
+            background: rgba(0, 255, 102, 0.18);
+            border-color: var(--neon-accent);
+            color: #fff;
+            box-shadow: 0 0 12px rgba(0, 255, 102, 0.4);
+            transform: translateY(-1px);
+        }
+        .dock-chip-icon {
+            font-size: 0.85rem;
+            line-height: 1;
+        }
+
         /* Modal del Asistente de IA */
         .modal-overlay {
             position: fixed;
@@ -908,12 +1002,13 @@
         <!-- Panel Izquierdo: Mapa de Red (principal) + Controles + Flujo Visual -->
         <div style="display: flex; flex-direction: column; gap: 1.5rem;">
             <!-- MAPA DE RED 3D — panel principal -->
-            <section class="panel" style="display:flex; flex-direction:column;">
+            <section class="panel" id="mainNetworkPanel" data-panel-title="Mapa de Red" style="display:flex; flex-direction:column;">
                 <h2 class="panel-title" style="margin-bottom: 0.8rem; display: flex; justify-content: space-between; align-items: center;">
                     <span>🕸️ Mapa de Red — Topología y Tráfico en Vivo</span>
-                    <span style="display: flex; gap: 6px;">
+                    <span style="display: flex; gap: 6px; align-items: center;">
                         <button id="btnResetGraph" class="btn" style="padding: 2px 8px; font-size: 0.7rem; margin: 0; width: auto; background: rgba(0, 255, 102, 0.05); border-color: rgba(0, 255, 102, 0.3);" title="Centrar y reajustar vista">Centrar</button>
                         <button id="btnClearGraph" class="btn" style="padding: 2px 8px; font-size: 0.7rem; margin: 0; width: auto; background: rgba(255, 0, 85, 0.05); border-color: rgba(255, 0, 85, 0.3);" title="Limpiar hosts del mapa">Limpiar</button>
+                        <button class="panel-min-btn" data-minimize="mainNetworkPanel" title="Minimizar">—</button>
                     </span>
                 </h2>
                 <div class="graph-container" style="background: #040406; border: 1px solid rgba(0, 255, 102, 0.15); border-radius: 8px; position: relative; overflow: hidden; height: 58vh; min-height: 420px; box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.9);">
@@ -931,8 +1026,11 @@
             </section>
 
             <!-- Controles -->
-            <section class="panel">
-                <h2 class="panel-title">Parámetros de Vigilancia</h2>
+            <section class="panel" id="paramsPanel" data-panel-title="Parámetros de Vigilancia">
+                <h2 class="panel-title" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>Parámetros de Vigilancia</span>
+                    <button class="panel-min-btn" data-minimize="paramsPanel" title="Minimizar">—</button>
+                </h2>
                 
          <div class="form-group">
     <label for="autoOption">Modo de escaneo automático</label>
@@ -972,8 +1070,11 @@
             </section>
 
             <!-- Flujo Visual de Escaneo -->
-            <section class="panel" style="flex-grow: 1;">
-                <h2 class="panel-title" style="margin-bottom: 0.8rem;">Mapa de Flujo de Escaneo</h2>
+            <section class="panel" id="timelinePanel" data-panel-title="Mapa de Flujo" style="flex-grow: 1;">
+                <h2 class="panel-title" style="margin-bottom: 0.8rem; display: flex; justify-content: space-between; align-items: center;">
+                    <span>Mapa de Flujo de Escaneo</span>
+                    <button class="panel-min-btn" data-minimize="timelinePanel" title="Minimizar">—</button>
+                </h2>
                 <div class="timeline">
                     <div class="timeline-item" id="step-0">
                         <div class="timeline-dot pending"></div>
@@ -1036,11 +1137,14 @@
         <!-- Panel Derecho: Consola + Paneles Inferiores -->
         <div style="display: flex; flex-direction: column; gap: 1rem;">
             <!-- Terminal -->
-            <section class="panel" style="flex-grow: 1;">
+            <section class="panel" id="consolePanel" data-panel-title="Consola" style="flex-grow: 1;">
                 <div class="console-wrapper">
-                    <div class="console-header">
+                    <div class="console-header" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                         <span>terminal@hades-surveillance:~$ logs</span>
-                        <span id="autoScanBadge" style="color: var(--neon-accent); display:none;">[AUTOSTART ACTIVO]</span>
+                        <span style="display: flex; align-items: center; gap: 6px;">
+                            <span id="autoScanBadge" style="color: var(--neon-accent); display:none;">[AUTOSTART ACTIVO]</span>
+                            <button class="panel-min-btn" data-minimize="consolePanel" title="Minimizar">—</button>
+                        </span>
                     </div>
                     <div id="consoleLog" class="console">Iniciando Ecosistema HADES Tactical Command Center...
 Esperando órdenes...</div>
@@ -1048,10 +1152,13 @@ Esperando órdenes...</div>
             </section>
 
             <!-- DETALLES DEL ACTIVO (se llena al pinchar un host en el Mapa de Red) — estilo pestañas -->
-            <section class="panel" id="hostDetailPanel" style="display:flex; flex-direction:column;">
+            <section class="panel" id="hostDetailPanel" data-panel-title="Detalles del Activo" style="display:flex; flex-direction:column;">
                 <h2 class="panel-title" style="margin-bottom: 0.6rem; display:flex; justify-content:space-between; align-items:center;">
                     <span>⬡ Detalles del Activo</span>
-                    <span id="hostDetailIp" style="font-family: var(--font-mono); font-size:0.85rem; color: var(--neon-accent);"></span>
+                    <span style="display: flex; align-items: center; gap: 8px;">
+                        <span id="hostDetailIp" style="font-family: var(--font-mono); font-size:0.85rem; color: var(--neon-accent);"></span>
+                        <button class="panel-min-btn" data-minimize="hostDetailPanel" title="Minimizar">—</button>
+                    </span>
                 </h2>
                 <div id="hostTabs" class="host-tabs">
                     <button class="host-tab active" data-tab="general">General</button>
@@ -1068,10 +1175,10 @@ Esperando órdenes...</div>
             </section>
 
             <!-- Cuadro de Recursos del PC Local -->
-            <div class="mini-panel" id="resourcePanel" style="height: 220px; display: flex; flex-direction: column; margin-bottom: 0.5rem;">
+            <div class="mini-panel" id="resourcePanel" data-panel-title="Recursos del Sistema" style="height: 220px; display: flex; flex-direction: column; margin-bottom: 0.5rem;">
                 <div class="lsw-header">
                     <span class="lsw-title">💻 RECURSOS DEL SISTEMA LOCAL</span>
-                    <button class="lsw-close" id="resourceCloseBtn" title="Cerrar">✕</button>
+                    <button class="lsw-close" id="resourceCloseBtn" data-minimize="resourcePanel" title="Minimizar">—</button>
                 </div>
                 <div class="ai-metrics" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; padding: 15px 16px; flex-grow: 1; align-content: center;">
                     <div class="ai-metric-row">
@@ -1105,12 +1212,12 @@ Esperando órdenes...</div>
             <!-- Fila inferior: Flujo en Vivo + Ollama IA -->
             <div class="bottom-panels-row">
                 <!-- Flujo en Vivo -->
-                <div class="mini-panel" id="liveScanWidget">
+                <div class="mini-panel" id="liveScanWidget" data-panel-title="Flujo en Vivo">
                     <div class="lsw-header">
                         <span class="lsw-title">⬡ FLUJO EN VIVO</span>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <div class="lsw-indicator" id="lswIndicator"></div>
-                            <button class="lsw-close" id="lswCloseBtn" title="Cerrar">✕</button>
+                            <button class="lsw-close" id="lswCloseBtn" data-minimize="liveScanWidget" title="Minimizar">—</button>
                         </div>
                     </div>
                     <div class="lsw-body" id="lswBody"></div>
@@ -1121,12 +1228,12 @@ Esperando órdenes...</div>
                 </div>
 
                 <!-- Panel Ollama IA -->
-                <div class="mini-panel" id="ollamaPanel">
+                <div class="mini-panel" id="ollamaPanel" data-panel-title="Ollama IA">
                     <div class="lsw-header">
                         <span class="lsw-title">🧠 OLLAMA IA</span>
                         <div style="display:flex;align-items:center;gap:6px;">
                             <div class="ai-status-dot idle" id="aiStatusDot"></div>
-                            <button class="lsw-close" id="aiCloseBtn" title="Cerrar">✕</button>
+                            <button class="lsw-close" id="aiCloseBtn" data-minimize="ollamaPanel" title="Minimizar">—</button>
                         </div>
                     </div>
                     <div class="ai-metrics">
@@ -1155,6 +1262,9 @@ Esperando órdenes...</div>
             </div>
         </div>
     </main>
+
+    <!-- Dock flotante de cuadros minimizados — clic en un chip para restaurar el cuadro -->
+    <div id="minimizedDock" role="region" aria-label="Cuadros minimizados"></div>
 
 
     <!-- Librería del mapa 3D (Three.js/WebGL embebido) — vendorizada para uso offline -->
@@ -1185,6 +1295,70 @@ Esperando órdenes...</div>
         const autoScanBadge = document.getElementById("autoScanBadge");
         const autoOption = document.getElementById("autoOption");
         const rangeInfo = document.getElementById("rangeInfo");
+
+        /* =====================================================
+           SISTEMA UNIFICADO DE MINIMIZAR / RESTAURAR CUADROS
+           Cualquier elemento con atributo data-minimize="<panelId>"
+           minimiza el cuadro indicado y agrega un chip en el dock.
+           El chip se hace clic para restaurar (maximizar) el cuadro.
+           ===================================================== */
+        const minimizedDock = document.getElementById('minimizedDock');
+        const minimizedChips = new Map(); // panelId -> chip element
+
+        function minimizePanel(panelId) {
+            const panel = document.getElementById(panelId);
+            if (!panel || minimizedChips.has(panelId)) return;
+
+            const title = panel.dataset.panelTitle || panelId;
+            panel.classList.add('minimized');
+
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'dock-chip';
+            chip.dataset.target = panelId;
+            chip.title = `Maximizar "${title}"`;
+            chip.innerHTML = `<span class="dock-chip-icon">▢</span><span>${title}</span>`;
+            chip.addEventListener('click', () => restorePanel(panelId));
+
+            minimizedDock.appendChild(chip);
+            minimizedChips.set(panelId, chip);
+            updateDockVisibility();
+        }
+
+        function restorePanel(panelId) {
+            const panel = document.getElementById(panelId);
+            if (!panel) return;
+
+            panel.classList.remove('minimized');
+            // Si el cuadro también usaba la clase .hidden (mini-paneles), la quitamos
+            // para que vuelva a verse sin esperar otro evento de scan.
+            panel.classList.remove('hidden');
+
+            const chip = minimizedChips.get(panelId);
+            if (chip) {
+                chip.remove();
+                minimizedChips.delete(panelId);
+            }
+            updateDockVisibility();
+        }
+
+        function updateDockVisibility() {
+            if (minimizedChips.size > 0) {
+                minimizedDock.classList.add('show');
+            } else {
+                minimizedDock.classList.remove('show');
+            }
+        }
+
+        // Delegación: cualquier botón con data-minimize minimiza su cuadro
+        document.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('[data-minimize]');
+            if (!btn) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            minimizePanel(btn.dataset.minimize);
+        });
+        // ── FIN sistema minimizar / restaurar ─────────────────
 
         // Helper para mapear logs y actualizar el estado visual de la línea de tiempo (Timeline)
         function updateTimelineVisuals(message) {
@@ -1323,10 +1497,11 @@ Esperando órdenes...</div>
             else if (m.includes('informe') || m.includes('report'))              lswPhase.textContent = 'FASE 6 — REPORTE';
         }
 
-        let lswManualClose = false;
-
         function showLsw()  {
-            if (!lswManualClose) liveScanWidget.classList.remove('hidden');
+            // El usuario puede haber minimizado el cuadro: respetamos su elección y no lo restauramos.
+            if (!liveScanWidget.classList.contains('minimized')) {
+                liveScanWidget.classList.remove('hidden');
+            }
         }
         function hideLsw()  { liveScanWidget.classList.add('hidden'); }
         function resetLsw() {
@@ -1334,16 +1509,13 @@ Esperando órdenes...</div>
             lswEventCount = 0;
             lswCount.textContent = '0 eventos';
             lswPhase.textContent = '—';
-            lswManualClose = false;
         }
 
-        // Botón cerrar Flujo en Vivo
-        document.getElementById('lswCloseBtn').addEventListener('click', () => {
-            lswManualClose = true;
-            hideLsw();
-        });
-
-        // ── OLLAMA IA METRICS ────────────────────────────────────────
+        // ── OLLAMA IA METRICS (datos REALES desde /api/ollama) ─────────
+        // El backend hace polling al API local de Ollama (127.0.0.1:11434) y
+        // expone /api/ollama con: connected, version, model_name, vram_mb,
+        // size_mb, expires_in_seconds, tokens_per_second (de la última
+        // inferencia real medida por hades_local.py), total_duration_ms.
         const ollamaPanel    = document.getElementById('ollamaPanel');
         const aiModelBar     = document.getElementById('aiModelBar');
         const aiTokenBar     = document.getElementById('aiTokenBar');
@@ -1356,101 +1528,111 @@ Esperando órdenes...</div>
         const aiStatusDot    = document.getElementById('aiStatusDot');
         const aiStatusDot2   = document.getElementById('aiStatusDot2');
         const aiStatusText   = document.getElementById('aiStatusText');
-        let aiAnimInterval   = null;
-        let aiManualClose    = false;
 
-        function activateAiPanel() {
-            if (aiManualClose) return;
-            ollamaPanel.classList.remove('hidden');
-            aiStatusDot.className  = 'ai-status-dot active';
-            aiStatusDot2.className = 'ai-status-dot active';
-            aiStatusText.textContent = 'ANALIZANDO...';
-            aiStatusText.style.color = 'var(--neon-accent)';
-            [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.add('active'));
+        // Etiquetas reales para que el usuario vea de inmediato qué es cada métrica
+        (function relabelAiMetrics() {
+            const rows = ollamaPanel.querySelectorAll('.ai-metric-label span:first-child');
+            // Mantener orden: Modelo / Tokens / Keep-Alive / VRAM
+            if (rows[0]) rows[0].textContent = 'Modelo activo';
+            if (rows[1]) rows[1].textContent = 'Tokens/s (última inferencia)';
+            if (rows[2]) rows[2].textContent = 'Keep-Alive restante';
+            if (rows[3]) rows[3].textContent = 'VRAM en uso';
+        })();
 
-            // Simular progreso de métricas durante el análisis
-            let progress = 0;
-            if (aiAnimInterval) clearInterval(aiAnimInterval);
-            // Iniciar modelo de carga
-            aiModelBar.style.width = '100%';
-            aiModelVal.textContent = '100%';
-            // Iniciar memoria
-            const memMB = Math.floor(Math.random() * 800 + 1400);
-            aiMemBar.style.width = Math.min(memMB / 40, 100) + '%';
-            aiMemVal.textContent = memMB + ' MB';
+        // Capacidad asumida para normalizar barras (ajustable por entorno).
+        // VRAM: 16 GB por defecto. Tokens/s: 80 t/s como tope visual.
+        const AI_VRAM_CAPACITY_MB    = 16 * 1024;
+        const AI_TPS_BAR_MAX         = 80;
+        const AI_KEEPALIVE_MAX_SEC   = 30 * 60; // 30 min — coincide con la config Ollama del usuario
 
-            aiAnimInterval = setInterval(() => {
-                progress = Math.min(progress + Math.random() * 6 + 1, 98); // Topar en 98% hasta recibir log de completado
-                const p = Math.round(progress);
-                aiProgressBar.style.width = p + '%';
-                aiProgressVal.textContent = p + '%';
-                const tps = Math.floor(Math.random() * 30 + 15);
-                aiTokenBar.style.width = Math.min(tps * 2, 100) + '%';
-                aiTokenVal.textContent = tps + ' t/s';
-            }, 600);
+        function setAiStatus(text, color, dotClass) {
+            aiStatusText.textContent = text;
+            aiStatusText.style.color = color || '';
+            aiStatusDot.className  = `ai-status-dot ${dotClass}`;
+            aiStatusDot2.className = `ai-status-dot ${dotClass}`;
         }
 
-        function completeAiPanel() {
-            if (aiAnimInterval) {
-                clearInterval(aiAnimInterval);
-                aiAnimInterval = null;
+        function applyOllamaSnapshot(d) {
+            // Caso DESCONECTADO: Ollama no responde
+            if (!d || !d.connected) {
+                aiModelBar.style.width = '0%';    aiModelVal.textContent = 'sin Ollama';
+                aiTokenBar.style.width = '0%';    aiTokenVal.textContent = '0 t/s';
+                aiProgressBar.style.width = '0%'; aiProgressVal.textContent = '—';
+                aiMemBar.style.width = '0%';      aiMemVal.textContent = '— MB';
+                setAiStatus('DESCONECTADO — Ollama no responde en 127.0.0.1:11434', 'var(--neon-alert)', 'idle');
+                [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.remove('active'));
+                return;
             }
-            
-            // Mostrar 100% y COMPLETADO brevemente
-            aiProgressBar.style.width = '100%';
-            aiProgressVal.textContent = '100%';
-            aiStatusDot.className  = 'ai-status-dot idle';
-            aiStatusDot2.className = 'ai-status-dot idle';
-            aiStatusText.textContent = 'COMPLETADO';
-            aiStatusText.style.color = '#ff9f00';
-            [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.remove('active'));
-            
-            // Regresar barras a cero tras 1.5s
-            setTimeout(() => {
-                if (!aiAnimInterval) {
-                    aiModelBar.style.width = '0%';
-                    aiModelVal.textContent = '0%';
-                    aiTokenBar.style.width = '0%';
-                    aiTokenVal.textContent = '0 t/s';
-                    aiProgressBar.style.width = '0%';
-                    aiProgressVal.textContent = '0%';
-                    aiMemBar.style.width = '0%';
-                    aiMemVal.textContent = '— MB';
-                    aiStatusText.textContent = 'EN ESPERA / INACTIVO';
-                    aiStatusText.style.color = '';
-                }
-            }, 1500);
-        }
 
-        function resetAiPanel() {
-            if (aiAnimInterval) { clearInterval(aiAnimInterval); aiAnimInterval = null; }
-            aiModelBar.style.width = '0%';    aiModelVal.textContent = '0%';
-            aiTokenBar.style.width = '0%';    aiTokenVal.textContent = '0 t/s';
-            aiProgressBar.style.width = '0%'; aiProgressVal.textContent = '0%';
-            aiMemBar.style.width = '0%';      aiMemVal.textContent = '— MB';
-            aiStatusDot.className  = 'ai-status-dot idle';
-            aiStatusDot2.className = 'ai-status-dot idle';
-            aiStatusText.textContent = 'EN ESPERA';
-            aiStatusText.style.color = '';
-            [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.remove('active'));
-            aiManualClose = false;
-        }
+            const hasModel = d.loaded_models > 0 && d.model_name;
+            const tps      = Number(d.tokens_per_second) || 0;
+            const vramMb   = Number(d.vram_mb) || 0;
+            const sizeMb   = Number(d.size_mb) || 0;
+            const keepSec  = Number(d.expires_in_seconds) || 0;
+            const ageSec   = (d.last_metric_age_seconds == null) ? null : Number(d.last_metric_age_seconds);
 
-        // Botón cerrar Ollama IA
-        document.getElementById('aiCloseBtn').addEventListener('click', () => {
-            aiManualClose = true;
-            ollamaPanel.classList.add('hidden');
-        });
+            // Modelo activo (texto + barra como indicador de carga)
+            aiModelVal.textContent = hasModel ? d.model_name : 'inactivo';
+            aiModelBar.style.width = hasModel ? '100%' : '0%';
 
-        // Detectar fase IA desde logs
-        function checkAiPhaseFromLog(msg) {
-            const m = msg.toLowerCase();
-            if (m.includes('análisis ia') || m.includes('analizando tráfico con ia') || m.includes('ollama')) {
-                activateAiPanel();
-            } else if (m.includes('actualizando templates') || m.includes('nuclei') || m.includes('fase 3') || m.includes('fase 4') || m.includes('finalizado') || m.includes('completada con exito')) {
-                completeAiPanel();
+            // Tokens/s real de la última inferencia. Si nunca hubo: 0 t/s.
+            aiTokenVal.textContent = tps > 0 ? `${tps.toFixed(1)} t/s` : '0 t/s';
+            aiTokenBar.style.width = Math.min((tps / AI_TPS_BAR_MAX) * 100, 100) + '%';
+
+            // Keep-alive restante como % del máximo configurado (30 min)
+            const keepPct = hasModel ? Math.min((keepSec / AI_KEEPALIVE_MAX_SEC) * 100, 100) : 0;
+            aiProgressBar.style.width = keepPct + '%';
+            if (hasModel) {
+                const mm = Math.floor(keepSec / 60);
+                const ss = keepSec % 60;
+                aiProgressVal.textContent = `${mm}m ${String(ss).padStart(2, '0')}s`;
+            } else {
+                aiProgressVal.textContent = '—';
+            }
+
+            // VRAM real
+            aiMemVal.textContent = vramMb > 0 ? `${vramMb} MB` : '0 MB';
+            aiMemBar.style.width = Math.min((vramMb / AI_VRAM_CAPACITY_MB) * 100, 100) + '%';
+
+            // Estado: GENERANDO si hubo inferencia en los últimos 6s, MODELO CARGADO si
+            // hay modelo en VRAM, EN ESPERA si Ollama está vivo pero sin modelos.
+            const generating = ageSec !== null && ageSec <= 6 && tps > 0;
+            if (generating) {
+                setAiStatus(`GENERANDO — ${d.model_name} · ${tps.toFixed(1)} t/s`, 'var(--neon-accent)', 'active');
+                [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.add('active'));
+            } else if (hasModel) {
+                setAiStatus(`MODELO CARGADO · v${d.version || '?'}`, '#ff9f00', 'idle');
+                [aiTokenBar, aiProgressBar].forEach(b => b.classList.remove('active'));
+                [aiModelBar, aiMemBar].forEach(b => b.classList.add('active'));
+            } else {
+                setAiStatus(`EN ESPERA — Ollama v${d.version || '?'} sin modelo en VRAM`, '', 'idle');
+                [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.remove('active'));
             }
         }
+
+        async function fetchOllamaMetrics() {
+            try {
+                const res = await fetch(`/api/ollama?token=${REAL_SURVEILLANCE_TOKEN}`);
+                if (!res.ok) { applyOllamaSnapshot({ connected: false }); return; }
+                const data = await res.json();
+                applyOllamaSnapshot(data);
+            } catch (err) {
+                applyOllamaSnapshot({ connected: false });
+            }
+        }
+
+        // Stubs de compatibilidad: el resto del código sigue llamando a estas
+        // funciones desde el flujo de logs/scan; ahora son no-ops porque el
+        // panel se alimenta del polling real. resetAiPanel hace un refresh
+        // inmediato para que el usuario vea el estado al arrancar un scan.
+        function activateAiPanel()    { /* gestionado por polling /api/ollama */ }
+        function completeAiPanel()    { /* gestionado por polling /api/ollama */ }
+        function resetAiPanel()       { fetchOllamaMetrics(); }
+        function checkAiPhaseFromLog(_msg) { /* gestionado por polling /api/ollama */ }
+
+        // Polling real cada 3s + carga inicial inmediata
+        setInterval(fetchOllamaMetrics, 3000);
+        setTimeout(fetchOllamaMetrics, 300);
         // ── FIN OLLAMA IA METRICS ─────────────────────────────────────
 
         // ── RECURSOS DEL SISTEMA LOCAL ─────────────────────────────────
@@ -1491,11 +1673,6 @@ Esperando órdenes...</div>
                 console.error("Error consultando recursos del sistema:", err);
             }
         }
-
-        // Botón cerrar Recursos del PC
-        document.getElementById('resourceCloseBtn').addEventListener('click', () => {
-            resourcePanel.classList.add('hidden');
-        });
 
         // Polling de recursos cada 2.5 segundos
         setInterval(fetchSystemResources, 2500);
@@ -1566,11 +1743,13 @@ Esperando órdenes...</div>
                 const dot = item.querySelector(".timeline-dot");
                 if (dot) dot.className = "timeline-dot pending";
             });
-            // Resetear paneles inferiores
+            // Resetear paneles inferiores (respetamos cuadros que el usuario minimizó)
             resetLsw();
             showLsw();
             resetAiPanel();
-            resourcePanel.classList.remove('hidden');
+            if (!resourcePanel.classList.contains('minimized')) {
+                resourcePanel.classList.remove('hidden');
+            }
             // Limpiar y resetear Mapa de Red Obsidian para el nuevo escaneo
             if (window.networkGraph) {
                 window.networkGraph.clear();

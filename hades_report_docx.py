@@ -666,8 +666,6 @@ def build_iso27001_docx(data, output_path):
     hosts = data["hosts"]
     by_risk = sorted(hosts, key=lambda x: RISK_ORDER.index(x["risk"]))
     up = [h for h in hosts if not h["status"].startswith("caído")]
-    total_ports = sum(len(h["ports"]) for h in hosts)
-    total_cves = sorted({c for h in hosts for c in h["cves"]})
     risk_count = {lvl: sum(1 for h in hosts if h["risk"] == lvl) for lvl in RISK_ORDER}
     criticos = risk_count["CRÍTICO"] + risk_count["ALTO"]
 

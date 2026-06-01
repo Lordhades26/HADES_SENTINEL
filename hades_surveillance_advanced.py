@@ -11,7 +11,7 @@ Flujo:
   FASE 4 → Auditoría completa por IP (Nmap deep + Nuclei + TLS + IA)
   FASE 5 → Guardar informes (individual por host + maestro .md)
 """
-import os, sys, json, re, subprocess
+import os, sys, re
 from datetime import datetime
 from collections import defaultdict
 
@@ -75,7 +75,6 @@ def parse_tshark_output(raw, active_ips):
     connections = defaultdict(int)
     external_ips = set()
     protocols = defaultdict(int)
-    local_subnet = set()
 
     for line in raw.strip().splitlines():
         parts = line.strip().split('\t')
@@ -181,7 +180,7 @@ class HadesSurveillance:
         for name, ok in preflight.items():
             master_report += f"| {name} | {'✅ Disponible' if ok else '⚠️ No disponible'} |\n"
         master_report += "\n"
-        master_report += f"| Campo | Valor |\n|---|---|\n"
+        master_report += "| Campo | Valor |\n|---|---|\n"
         master_report += f"| Red objetivo | `{self.target_range}` |\n"
         master_report += f"| Fecha | {datetime.now().strftime('%d/%m/%Y %H:%M')} |\n"
 
@@ -236,7 +235,7 @@ class HadesSurveillance:
             f.write("=== DATOS RAW ===\n")
             f.write(tshark_raw)
 
-        master_report += f"## Fase 2 — Captura de Tráfico (Tshark)\n"
+        master_report += "## Fase 2 — Captura de Tráfico (Tshark)\n"
         master_report += f"**Interfaz:** `{interface}` | **Duración:** {self.capture_seconds}s\n\n"
         master_report += f"```\n{tshark_summary}\n```\n\n---\n\n"
 
@@ -277,8 +276,8 @@ class HadesSurveillance:
         print(f"{'-'*65}")
         for idx, ip in enumerate(active_ips, 1):
             print(f"  [{idx}] IP: {ip}")
-        print(f"  [A] Escanear TODOS los hosts de la red de forma automatica")
-        print(f"  [Q] Salir de HADES")
+        print("  [A] Escanear TODOS los hosts de la red de forma automatica")
+        print("  [Q] Salir de HADES")
         print(f"{'-'*65}\n")
 
         chosen_ips = []
@@ -357,7 +356,7 @@ class HadesSurveillance:
         print(f"  [HADES] Vigilancia v{HADES_VERSION} completada.")
         print(f"  Fase 1 — Dispositivos detectados : {len(active_ips)}")
         print(f"  Fase 2 — Tráfico capturado       : {self.capture_seconds}s en [{interface}]")
-        print(f"  Fase 3 — Templates Nuclei         : verificados")
+        print("  Fase 3 — Templates Nuclei         : verificados")
         print(f"  Fase 4 — Hosts auditados OK       : {audited_ok}/{len(chosen_ips)}")
         print(f"  Informe consolidado (.md) : {master_file}")
         if docx_file:

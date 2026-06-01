@@ -3,7 +3,7 @@ import subprocess
 import sys
 import shutil
 import os
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 # Common Windows paths for security tools
 WIN_PATHS = [
