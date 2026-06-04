@@ -1907,6 +1907,10 @@ Esperando órdenes...</div>
             // Inicializar el mapa de red 3D (carga el último escaneo vía /api/graph)
             window.networkGraph = new HadesGraph3D('networkGraph3D');
             window.networkGraph.init();
+            // Polling en vivo: refresca el mapa cada 5s para reflejar el escaneo
+            // en curso. El backend devuelve hosts descubiertos en FASE 1 antes
+            // de la auditoria completa, asi el mapa se llena progresivamente.
+            setInterval(() => { try { window.networkGraph.refresh(); } catch(_) {} }, 5000);
             logToConsole(">>> Dashboard listo. El mapa muestra el último escaneo. Pulsa 'Iniciar' para lanzar una auditoría.");
         });
 
