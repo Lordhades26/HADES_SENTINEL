@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HADES SENTINEL — Autenticacion biometrica</title>
+<style>
+  :root {
+    --azul: #0066ff;
+    --rojo: #ff2d3a;
+    --acero: #1a2433;
+    --acero-2: #0f1620;
+    --texto: #e8eef7;
+    --tenue: #8d9bb1;
+    --ok: #20d68a;
+    --err: #ff5570;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: radial-gradient(ellipse at top, #1a2433 0%, #050810 70%);
+    color: var(--texto);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { display: flex; align-items: center; justify-content: center; }
+  .card {
+    width: min(440px, 92vw);
+    background: rgba(15, 22, 32, 0.85);
+    border: 1px solid #1f2c3f;
+    border-radius: 14px;
+    padding: 36px 32px 30px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,102,255,0.08) inset;
+    backdrop-filter: blur(14px);
+  }
+  .brand { text-align: center; margin-bottom: 24px; }
+  .brand-mark {
+    display: inline-block;
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 3px;
+    color: var(--azul);
+    border: 1px solid var(--azul);
+    padding: 4px 10px;
+    border-radius: 4px;
+    margin-bottom: 14px;
+  }
+  .brand h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .brand h1 .accent { color: var(--rojo); }
+  .brand p { color: var(--tenue); font-size: 13px; }
+  .hero {
+    text-align: center;
+    padding: 20px 0 26px;
+  }
+  .hero-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 14px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--azul), #0044bb);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+    box-shadow: 0 8px 24px rgba(0, 102, 255, 0.35);
+  }
+  .hero h2 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+  .hero p { color: var(--tenue); font-size: 13px; padding: 0 8px; }
+  .btn {
+    display: block; width: 100%;
+    padding: 13px 20px;
+    border: 0;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--azul), #0044cc);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    transition: transform 0.08s, box-shadow 0.2s, opacity 0.2s;
+  }
+  .btn:hover { box-shadow: 0 6px 24px rgba(0,102,255,0.4); transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+  .msg {
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.45;
+    display: none;
+  }
+  .msg.ok  { display: block; background: rgba(32,214,138,0.12); border: 1px solid rgba(32,214,138,0.4); color: var(--ok); }
+  .msg.err { display: block; background: rgba(255,85,112,0.10); border: 1px solid rgba(255,85,112,0.4); color: var(--err); }
+  .msg.info{ display: block; background: rgba(0,102,255,0.10); border: 1px solid rgba(0,102,255,0.4); color: #88b5ff; }
+  .footer {
+    margin-top: 24px;
+    padding-top: 18px;
+    border-top: 1px solid #1f2c3f;
+    text-align: center;
+    font-size: 11px;
+    color: var(--tenue);
+    letter-spacing: 0.4px;
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <main class="card">
+    <header class="brand">
+      <span class="brand-mark">CIBERAGENTES</span>
+      <h1>HADES <span class="accent">SENTINEL</span></h1>
+      <p>Centro de mando tactico</p>
+    </header>
+
+    <section class="hero">
+      <div class="hero-icon">&#x1F510;</div>
+      <h2 id="title">Verificando autenticacion...</h2>
+      <p id="subtitle">Consultando estado del agente</p>
+    </section>
+
+    <button id="action" class="btn" disabled>Cargando...</button>
+    <div id="msg" class="msg"></div>
+
+    <footer class="footer">
+      Autenticacion biometrica via Windows Hello (WebAuthn / FIDO2)
+    </footer>
+  </main>
+
+<script>
+'use strict';
+
+// ---------- base64url <-> ArrayBuffer ----------
+function b64uToBuf(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr.buffer;
+}
+function bufToB64u(buf) {
+  const arr = new Uint8Array(buf);
+  let bin = '';
+  for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// ---------- UI helpers ----------
+const $ = id => document.getElementById(id);
+function setMsg(text, kind) {
+  const el = $('msg');
+  el.textContent = text;
+  el.className = 'msg ' + (kind || 'info');
+}
+function setUI({title, subtitle, button, disabled}) {
+  if (title !== undefined) $('title').textContent = title;
+  if (subtitle !== undefined) $('subtitle').textContent = subtitle;
+  if (button !== undefined) $('action').textContent = button;
+  if (disabled !== undefined) $('action').disabled = disabled;
+}
+function setBusy(label) {
+  $('action').innerHTML = '<span class="spinner"></span>' + label;
+  $('action').disabled = true;
+}
+
+// ---------- Convertir options del server -> formato WebAuthn ----------
+function inflateCreateOptions(opts) {
+  opts.challenge = b64uToBuf(opts.challenge);
+  opts.user.id = b64uToBuf(opts.user.id);
+  if (opts.excludeCredentials) {
+    opts.excludeCredentials.forEach(c => c.id = b64uToBuf(c.id));
+  }
+  return opts;
+}
+function inflateGetOptions(opts) {
+  opts.challenge = b64uToBuf(opts.challenge);
+  if (opts.allowCredentials) {
+    opts.allowCredentials.forEach(c => c.id = b64uToBuf(c.id));
+  }
+  return opts;
+}
+
+// ---------- Serializar PublicKeyCredential -> JSON enviable ----------
+function serializeRegistration(cred) {
+  return {
+    id: cred.id,
+    rawId: bufToB64u(cred.rawId),
+    type: cred.type,
+    response: {
+      attestationObject: bufToB64u(cred.response.attestationObject),
+      clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+    },
+    clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+  };
+}
+function serializeAuthentication(cred) {
+  return {
+    id: cred.id,
+    rawId: bufToB64u(cred.rawId),
+    type: cred.type,
+    response: {
+      authenticatorData: bufToB64u(cred.response.authenticatorData),
+      clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+      signature: bufToB64u(cred.response.signature),
+      userHandle: cred.response.userHandle ? bufToB64u(cred.response.userHandle) : null,
+    },
+    clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+  };
+}
+
+// ---------- Flujos ----------
+async function registerDevice() {
+  setBusy('Esperando a Windows Hello...');
+  setMsg('Sigue el cuadro del sistema para autenticar con tu huella, rostro o PIN.', 'info');
+  try {
+    const begin = await fetch('/api/auth/register/begin', {method: 'POST', credentials: 'include'});
+    const beginData = await begin.json();
+    if (!begin.ok) throw new Error(beginData.error || 'Error inicio registro');
+    const cred = await navigator.credentials.create({publicKey: inflateCreateOptions(beginData.options)});
+    if (!cred) throw new Error('Operacion cancelada');
+    const complete = await fetch('/api/auth/register/complete', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({challenge_id: beginData.challenge_id, credential: serializeRegistration(cred)}),
+    });
+    const completeData = await complete.json();
+    if (!complete.ok) throw new Error(completeData.error || 'Error completando registro');
+    setMsg('Dispositivo registrado. Redirigiendo al dashboard...', 'ok');
+    setTimeout(() => { window.location.href = '/index.html'; }, 800);
+  } catch (e) {
+    setMsg('Registro fallido: ' + (e.message || e), 'err');
+    setUI({button: 'Reintentar registro', disabled: false});
+  }
+}
+
+async function loginDevice() {
+  setBusy('Esperando a Windows Hello...');
+  setMsg('Confirma tu identidad con tu huella, rostro o PIN.', 'info');
+  try {
+    const begin = await fetch('/api/auth/login/begin', {method: 'POST', credentials: 'include'});
+    const beginData = await begin.json();
+    if (!begin.ok) throw new Error(beginData.error || 'Error inicio login');
+    const cred = await navigator.credentials.get({publicKey: inflateGetOptions(beginData.options)});
+    if (!cred) throw new Error('Operacion cancelada');
+    const complete = await fetch('/api/auth/login/complete', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({challenge_id: beginData.challenge_id, credential: serializeAuthentication(cred)}),
+    });
+    const completeData = await complete.json();
+    if (!complete.ok) throw new Error(completeData.error || 'Credencial rechazada');
+    setMsg('Acceso concedido. Redirigiendo...', 'ok');
+    setTimeout(() => { window.location.href = '/index.html'; }, 600);
+  } catch (e) {
+    setMsg('Login fallido: ' + (e.message || e), 'err');
+    setUI({button: 'Reintentar', disabled: false});
+  }
+}
+
+// ---------- Bootstrap ----------
+(async function init() {
+  // WebAuthn requiere contexto secure. localhost/127.0.0.1 sin TLS califica;
+  // si alguien expone el server por LAN, debe levantar TLS y los navegadores
+  // solo permitiran WebAuthn ahi.
+  if (!window.PublicKeyCredential) {
+    setUI({title: 'Navegador no compatible', subtitle: 'WebAuthn no disponible'});
+    setMsg('Tu navegador no soporta WebAuthn. Usa Edge o Chrome actuales.', 'err');
+    return;
+  }
+  try {
+    const r = await fetch('/api/auth/status', {credentials: 'include'});
+    const s = await r.json();
+    if (s.authenticated) {
+      // Ya hay sesion activa: ir directo al dashboard.
+      window.location.replace('/index.html');
+      return;
+    }
+    if (s.has_credentials) {
+      setUI({
+        title: 'Acceso al agente',
+        subtitle: 'Confirma con Windows Hello para entrar al dashboard.',
+        button: 'Iniciar sesion con Windows Hello',
+        disabled: false,
+      });
+      $('action').onclick = loginDevice;
+    } else {
+      setUI({
+        title: 'Primer arranque',
+        subtitle: 'Registra este dispositivo como duenio del agente. Sera la unica forma de acceder de aqui en adelante.',
+        button: 'Registrar dispositivo',
+        disabled: false,
+      });
+      $('action').onclick = registerDevice;
+    }
+  } catch (e) {
+    setMsg('No se pudo contactar al servidor: ' + e.message, 'err');
+    setUI({title: 'Error de conexion', subtitle: ''});
+  }
+})();
+</script>
+</body>
+</html>

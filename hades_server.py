@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
 """
-HADES SECURE DASHBOARD SERVER v1.0.0
-Servidor local ultraligero y seguro con protección CSRF por token.
-Permite lanzar y detener el agente HADES desde la interfaz web sin exponer el sistema a RCEs externos.
+HADES SECURE DASHBOARD SERVER
+
+Servidor local del agente HADES SENTINEL. Sirve el dashboard tactico, expone
+APIs internas para lanzar/detener escaneos y autoriza el acceso mediante
+WebAuthn (Windows Hello) — ver hades_auth.py para el flujo biometrico.
+
+Diseno: solo loopback (127.0.0.1:8080). Cero exposicion de red. Todas las
+APIs no-auth estan detras de una sesion valida (cookie HADES_SID).
 """
 import os
 import sys
 import json
 import socket
-import secrets
+import signal
+import atexit
 import subprocess
 import webbrowser
 import threading
 import urllib.request
 from urllib.parse import urlparse, parse_qs, unquote
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+import hades_auth as auth
 
 # Asegurar codificación UTF-8 en Windows para evitar UnicodeEncodeError al imprimir caracteres
 if sys.platform.startswith('win') or os.name == 'nt':
@@ -31,26 +39,100 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 active_process = None
 log_buffer = []
 
-# Token de sesión PERSISTENTE: se guarda en disco y se reutiliza entre reinicios.
-# Antes se regeneraba en cada arranque, lo que invalidaba las pestañas/URLs abiertas
-# (403 Invalid Token tras cada reinicio del servidor). Persistirlo lo evita.
-_TOKEN_FILE = os.path.join(_HERE, ".hades_token")
-def _load_or_create_token():
+# ---------------------------------------------------------------------------
+# Cleanup total al detener el agente. Regla: cuando el server se cierra (Ctrl+C,
+# Ctrl+Break, cierre de ventana CMD/PowerShell, SIGTERM, atexit), NO debe quedar
+# NADA corriendo — ni el subprocess de escaneo, ni herramientas hijas, ni token
+# de sesión en disco. Implementación scopada: NUNCA mata python.exe global.
+# ---------------------------------------------------------------------------
+HADES_CHILD_TOOLS = (
+    "nmap.exe", "tshark.exe", "nuclei.exe", "masscan.exe",
+    "gobuster.exe", "nikto.exe", "wpscan.exe", "httpx.exe",
+    "feroxbuster.exe", "openssl.exe", "sslscan.exe", "testssl.exe",
+)
+_cleanup_lock = threading.Lock()
+_cleanup_done = False
+
+def _kill_active_tree():
+    global active_process
+    if active_process is None:
+        return
     try:
-        if os.path.exists(_TOKEN_FILE):
-            t = open(_TOKEN_FILE, "r", encoding="utf-8").read().strip()
-            if len(t) >= 16:
-                return t
+        pid = active_process.pid
+    except Exception:
+        active_process = None
+        return
+    try:
+        subprocess.run(
+            f"taskkill /f /t /pid {pid}",
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+    except Exception:
+        try:
+            active_process.kill()
+        except Exception:
+            pass
+    try:
+        active_process.stdout.close()
     except Exception:
         pass
-    t = secrets.token_hex(16)
+    active_process = None
+
+def _kill_child_tools():
     try:
-        with open(_TOKEN_FILE, "w", encoding="utf-8") as f:
-            f.write(t)
+        args = " ".join(f"/im {t}" for t in HADES_CHILD_TOOLS)
+        subprocess.run(
+            f"taskkill /f {args}",
+            shell=True, capture_output=True, timeout=5
+        )
     except Exception:
         pass
-    return t
-token_session = _load_or_create_token()
+
+def _emergency_cleanup(reason="exit"):
+    global _cleanup_done
+    with _cleanup_lock:
+        if _cleanup_done:
+            return
+        _cleanup_done = True
+    try:
+        sys.stderr.write(f"\n[HADES] Cleanup ({reason}) — terminando subprocesos...\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+    _kill_active_tree()
+    _kill_child_tools()
+
+def _signal_handler(signum, _frame):
+    _emergency_cleanup(f"signal {signum}")
+    code = 130 if signum == signal.SIGINT else 0
+    sys.exit(code)
+
+atexit.register(_emergency_cleanup, "atexit")
+try:
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _signal_handler)  # Ctrl+Break en Windows
+except Exception:
+    pass
+
+# Windows-only: capturar cierre de ventana de consola (CTRL_CLOSE_EVENT). Sin
+# esto, cerrar la ventana del .bat mata Python inmediatamente sin disparar
+# atexit ni signal handlers, dejando subprocesos huérfanos. SetConsoleCtrlHandler
+# da ~5 s antes del kill forzoso del SO — suficiente para taskkill+revoke.
+if os.name == "nt":
+    try:
+        import ctypes
+        from ctypes import wintypes
+        _CTRL_HANDLER = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+        def _win_console_handler(ctrl_type):
+            # 0=C 1=BREAK 2=CLOSE 5=LOGOFF 6=SHUTDOWN
+            _emergency_cleanup(f"console event {ctrl_type}")
+            return False  # dejar que el flujo normal del SO también corra
+        _win_console_handler_ref = _CTRL_HANDLER(_win_console_handler)
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_win_console_handler_ref, True)
+    except Exception:
+        pass
 
 system_metrics = {
     "cpu": 0.0,
@@ -383,7 +465,10 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # CORS: sin Access-Control-Allow-Origin = same-origin only. El dashboard
+        # vive en el mismo origen (loopback :8080), no necesita CORS abierto.
+        # Antes era "*", que dejaba que cualquier pagina web del navegador
+        # leyera /api/auth/status y descubriera si hay credentials registradas.
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -412,21 +497,49 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         super().end_headers()
 
+    def _get_cookie_sid(self):
+        """Extrae el HADES_SID del header Cookie. None si no presente."""
+        raw = self.headers.get('Cookie', '')
+        for part in raw.split(';'):
+            part = part.strip()
+            if part.startswith('HADES_SID='):
+                return part[len('HADES_SID='):]
+        return None
+
+    def _set_session_cookie(self, sid):
+        """Header Set-Cookie para emitir sesion tras login/registro exitoso.
+        HttpOnly: invisible a JS (bloquea XSS robando sid).
+        SameSite=Strict: bloquea CSRF cross-site.
+        Sin Secure: estamos en http://127.0.0.1 (loopback); Secure rompe en http."""
+        self.send_header(
+            "Set-Cookie",
+            f"HADES_SID={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={auth.SESSION_TTL_SECONDS}"
+        )
+
+    def _clear_session_cookie(self):
+        self.send_header(
+            "Set-Cookie",
+            "HADES_SID=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
+        )
+
     def check_token(self):
-        """Valida que la petición incluya el token de sesión correcto."""
-        parsed_path = urlparse(self.path)
-        query = parse_qs(parsed_path.query)
-        req_token = query.get('token', [None])[0]
-        
-        # Validar en cabeceras si no viene en query string
-        if not req_token:
-            req_token = self.headers.get('X-Hades-Token')
-            
-        return req_token == token_session
+        """Autorizacion: cookie HADES_SID emitida tras WebAuthn login/registro.
+        Los endpoints publicos (/api/auth/*) bypasean este check; cualquier
+        otro endpoint requiere sesion valida o devuelve 403."""
+        return auth.session_valid(self._get_cookie_sid())
 
     def do_GET(self):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
+
+        # 0. API publica: estado de auth (sirve para que auth.html sepa si
+        # mostrar modo registro o modo login). No revela sid ni nada sensible.
+        if path == "/api/auth/status":
+            self._send_json({
+                "authenticated": auth.session_valid(self._get_cookie_sid()),
+                "has_credentials": auth.has_credentials(),
+            })
+            return
 
         # 1. API: Obtener logs en tiempo real
         if path == "/api/logs":
@@ -475,29 +588,108 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             self._send_json(graph)
             return
 
-        # 3. Servir archivos estáticos estándar (con inyección de Token de seguridad)
+        # 3. Pagina raiz / dashboard: gating por WebAuthn. Sin sesion -> auth.html.
         unquoted_path = unquote(path)
         if unquoted_path in ["/", "/index.html", "/agente HADES.html"]:
+            if not auth.session_valid(self._get_cookie_sid()):
+                auth_path = os.path.join(_HERE, "auth.html")
+                if os.path.exists(auth_path):
+                    with open(auth_path, "r", encoding="utf-8") as f:
+                        self._send_bytes(f.read(), "text/html; charset=utf-8")
+                    return
+                self.send_error(503, "auth.html no encontrada")
+                return
             html_path = os.path.join(_HERE, "agente HADES.html")
             if os.path.exists(html_path):
                 with open(html_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                # Inyectar el token de sesión dinámico en el HTML para uso del JavaScript
-                injected = content.replace("const HADES_SECURITY_TOKEN = '';", f"const HADES_SECURITY_TOKEN = '{token_session}';")
-                self._send_bytes(injected, "text/html; charset=utf-8")
+                    self._send_bytes(f.read(), "text/html; charset=utf-8")
                 return
 
-        # Llamar al manejador por defecto de SimpleHTTPRequestHandler para servir CSS/JS/Imágenes
+        # Resto de estaticos (CSS/JS/imagenes): handler por defecto del SDK.
         super().do_GET()
+
+    def _read_json_body(self):
+        try:
+            n = int(self.headers.get('Content-Length', '0'))
+            if n <= 0:
+                return {}
+            return json.loads(self.rfile.read(n).decode('utf-8'))
+        except Exception:
+            return {}
+
+    def _send_ok_with_cookie(self, set_cookie_fn):
+        """Emite {ok: true} con un Set-Cookie controlado por set_cookie_fn
+        (puede emitir nueva sesion o limpiar la actual)."""
+        body = json.dumps({"ok": True}).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        set_cookie_fn()
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def _handle_auth_post(self, path):
+        """Maneja /api/auth/* POST. Devuelve True si la ruta matched."""
+        if path == "/api/auth/register/begin":
+            try:
+                self._send_json(auth.begin_registration(authenticated_sid=self._get_cookie_sid()))
+            except PermissionError as e:
+                self._send_json({"error": str(e)}, code=403)
+            except Exception as e:
+                self._send_json({"error": f"register/begin: {e}"}, code=400)
+            return True
+
+        if path == "/api/auth/register/complete":
+            body = self._read_json_body()
+            try:
+                sid = auth.complete_registration(body.get("challenge_id"), body.get("credential"))
+                self._send_ok_with_cookie(lambda: self._set_session_cookie(sid))
+            except Exception as e:
+                self._send_json({"error": f"register/complete: {e}"}, code=400)
+            return True
+
+        if path == "/api/auth/login/begin":
+            try:
+                self._send_json(auth.begin_authentication())
+            except Exception as e:
+                self._send_json({"error": f"login/begin: {e}"}, code=400)
+            return True
+
+        if path == "/api/auth/login/complete":
+            body = self._read_json_body()
+            try:
+                sid = auth.complete_authentication(body.get("challenge_id"), body.get("credential"))
+                self._send_ok_with_cookie(lambda: self._set_session_cookie(sid))
+            except Exception as e:
+                self._send_json({"error": f"login/complete: {e}"}, code=400)
+            return True
+
+        if path == "/api/auth/logout":
+            sid = self._get_cookie_sid()
+            if sid:
+                auth.session_revoke(sid)
+            self._send_ok_with_cookie(self._clear_session_cookie)
+            return True
+
+        return False
 
     def do_POST(self):
         global active_process, log_buffer
+        parsed_path = urlparse(self.path)
+        path = parsed_path.path
+
+        # Endpoints de auth: NO requieren check_token (deben ser accesibles
+        # antes de tener sesion). Su propia logica decide quien puede llamarlos.
+        if path.startswith("/api/auth/"):
+            self._handle_auth_post(path)
+            return
+
         if not self.check_token():
             self.send_error(403, "Forbidden: Invalid Token")
             return
-
-        parsed_path = urlparse(self.path)
-        path = parsed_path.path
 
         # 1. API para lanzar el agente
         if path == "/api/scan":
@@ -570,45 +762,18 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         # 2. API para parada forzada de emergencia — TERMINACIÓN INMEDIATA
         if path == "/api/stop":
             add_log("[EMERGENCIA] ⚡ PARADA DE EMERGENCIA ACTIVADA — Terminando todos los procesos...")
-            
-            # PASO 1: Matar árbol de procesos del agente de forma INMEDIATA con taskkill
+
             if active_process is not None:
-                pid = active_process.pid
-                add_log(f"[EMERGENCIA] Ejecutando taskkill /f /t sobre PID {pid} y todos sus procesos hijos...")
-                try:
-                    # En Windows, /f = forzado, /t = árbol completo (mata hijos también)
-                    subprocess.run(
-                        f"taskkill /f /t /pid {pid}",
-                        shell=True, capture_output=True, text=True, timeout=5
-                    )
-                    add_log(f"[OK] Árbol de procesos del agente eliminado (PID {pid}).")
-                except Exception as e:
-                    add_log(f"[WARN] taskkill sobre PID {pid} falló: {str(e)} — intentando kill() directo...")
-                    try:
-                        active_process.kill()
-                    except Exception:
-                        pass
-                finally:
-                    # Forzar cierre del stream para desbloquear el hilo de lectura
-                    try:
-                        active_process.stdout.close()
-                    except Exception:
-                        pass
-                active_process = None
+                pid_msg = active_process.pid
+                add_log(f"[EMERGENCIA] taskkill /f /t sobre PID {pid_msg} y árbol de hijos...")
             else:
-                add_log("[INFO] No había proceso del agente activo registrado en el servidor.")
+                add_log("[INFO] Sin proceso de agente activo registrado — limpieza preventiva.")
 
-            # PASO 2: Limpieza de procesos huérfanos por nombre (seguro, no mata al servidor)
-            tools = ["nmap.exe", "tshark.exe", "nuclei.exe", "openssl.exe"]
-            add_log(f"[EMERGENCIA] Limpiando herramientas huérfanas: {', '.join(tools)}...")
-            try:
-                kill_cmd = "taskkill /f " + " ".join(f"/im {t}" for t in tools)
-                subprocess.run(kill_cmd, shell=True, capture_output=True, timeout=5)
-                add_log("[OK] ✅ Todas las herramientas de ciberseguridad han sido terminadas.")
-            except Exception as e:
-                add_log(f"[WARN] Error en limpieza de herramientas huérfanas: {str(e)}")
+            _kill_active_tree()
+            add_log(f"[EMERGENCIA] Limpiando herramientas huérfanas: {', '.join(HADES_CHILD_TOOLS)}...")
+            _kill_child_tools()
 
-            # PASO 3: También matar cualquier python con hades_surveillance en argumentos
+            # Compatibilidad: pythons con ventana hades* (heredado de versiones previas)
             try:
                 subprocess.run(
                     'taskkill /f /fi "WINDOWTITLE eq hades*" /fi "IMAGENAME eq python.exe"',
@@ -617,8 +782,7 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
 
-            # RESET A CERO: estado limpio para empezar de nuevo sin arrastrar errores.
-            active_process = None
+            add_log("[OK] ✅ Subprocesos terminados. Estado del servidor reseteado.")
             log_buffer = ["[RESET] Agente detenido y estado reiniciado a CERO. Listo para una nueva auditoría."]
 
             self._send_json({
@@ -639,24 +803,27 @@ class HadesHTTPServer(ThreadingHTTPServer):
 def start_server():
     server = HadesHTTPServer(('127.0.0.1', PORT), SecureHadesHandler)
     server.daemon_threads = True
-    url = f"http://127.0.0.1:{PORT}/index.html?token={token_session}"
-    
+    url = f"http://localhost:{PORT}/"
+
     print("=" * 70)
     print("   HADES SECURITY COMMAND CENTER SERVER ACTIVO")
     print(f"   Puerto: {PORT}")
-    print(f"   Token de sesión: {token_session}")
-    print("   Abriendo navegador web de forma segura en:")
-    print(f"   {url}")
+    print(f"   Auth: WebAuthn / Windows Hello (cookie HADES_SID)")
+    print(f"   Abriendo navegador en: {url}")
     print("=" * 70)
-    
-    # Abrir el navegador por defecto automáticamente
+
     webbrowser.open(url)
     
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nServidor cerrado correctamente.")
-        server.server_close()
+        print("\n[HADES] Ctrl+C recibido — cerrando server y limpiando subprocesos...")
+        _emergency_cleanup("KeyboardInterrupt")
+        try:
+            server.server_close()
+        except Exception:
+            pass
+        print("[HADES] Cierre limpio completado.")
 
 if __name__ == "__main__":
     start_server()

@@ -17,6 +17,15 @@ hades_run.out
 hades_run.err
 *.tmp
 
+# ─── WebAuthn — secretos del DISPOSITIVO del usuario, NO PUBLICAR ────────────
+# .hades_credentials.json: credentials WebAuthn registradas (clave publica del
+#   dispositivo + HMAC). Aunque la clave publica no es secreta criptograficamente,
+#   identifica unicamente al equipo del duenio.
+# .hades_machine_salt: salt aleatoria que firma el HMAC del archivo de
+#   credentials — si se filtra, un atacante podria forjar credentials validas.
+.hades_credentials.json
+.hades_machine_salt
+
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
