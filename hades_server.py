@@ -88,6 +88,38 @@ def _kill_child_tools():
     except Exception:
         pass
 
+def _unload_ollama_models():
+    """Descarga TODOS los modelos cargados en Ollama (keep_alive=0). La API
+    oficial de Ollama acepta este flag en /api/generate para liberar el modelo
+    inmediatamente de RAM/VRAM. Llamado en parada de emergencia para que la
+    parada del agente tambien libere los recursos del motor IA. Fail-safe: si
+    Ollama no responde, el modelo se descarga eventualmente por TTL natural."""
+    # OLLAMA_HOST se define mas abajo en este archivo; si esta funcion corre
+    # antes de su definicion, abortamos silencioso.
+    try:
+        host = OLLAMA_HOST
+    except NameError:
+        return
+    try:
+        req = urllib.request.Request(f"{host}/api/ps", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=2.0) as res:
+            models = (json.loads(res.read().decode("utf-8")).get("models") or [])
+    except Exception:
+        return
+    for m in models:
+        name = m.get("name") or m.get("model")
+        if not name:
+            continue
+        try:
+            body = json.dumps({"model": name, "keep_alive": 0}).encode("utf-8")
+            req = urllib.request.Request(
+                f"{host}/api/generate", data=body, method="POST",
+                headers={"Content-Type": "application/json"}
+            )
+            urllib.request.urlopen(req, timeout=3).read()
+        except Exception:
+            pass
+
 def _emergency_cleanup(reason="exit"):
     global _cleanup_done
     with _cleanup_lock:
@@ -233,16 +265,22 @@ def monitor_ollama():
                     snap["size_mb"] = int(sum(m.get("size", 0) for m in models) / (1024 * 1024))
                     expires_at = primary.get("expires_at")
                     if expires_at:
-                        # expires_at es ISO 8601; calcular segundos hasta expiración
+                        # Ollama emite ISO 8601 con offset, ej:
+                        #   "2026-06-04T15:50:54.3154521-03:00"  (hora local)
+                        #   "2026-06-04T18:50:54.3154521Z"        (UTC)
+                        # Antes haciamos rstrip('Z') + replace(tzinfo=UTC), lo que
+                        # convertia HORA LOCAL a UTC erroneamente y siempre daba
+                        # delta negativo -> Keep-Alive = 0. fromisoformat de Python
+                        # 3.11+ entiende el offset directamente; solo hay que recortar
+                        # microsegundos de 7+ digitos (la lib solo acepta 6).
                         try:
+                            import re
                             from datetime import datetime, timezone
-                            # Ollama emite formato "2024-01-01T00:00:00.000000000Z" — recortar a microsegundos
-                            ea = expires_at.rstrip("Z")
-                            if "." in ea:
-                                head, tail = ea.split(".", 1)
-                                tail = tail[:6]  # microsegundos máx
-                                ea = f"{head}.{tail}"
-                            dt = datetime.fromisoformat(ea).replace(tzinfo=timezone.utc)
+                            s = expires_at.replace("Z", "+00:00")
+                            s = re.sub(r"(\.\d{6})\d+", r"\1", s)
+                            dt = datetime.fromisoformat(s)
+                            if dt.tzinfo is None:
+                                dt = dt.replace(tzinfo=timezone.utc)
                             delta = (dt - datetime.now(timezone.utc)).total_seconds()
                             snap["expires_in_seconds"] = max(0, int(delta))
                         except Exception:
@@ -782,11 +820,28 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             except Exception:
                 pass
 
-            add_log("[OK] ✅ Subprocesos terminados. Estado del servidor reseteado.")
+            # Liberar tambien el modelo IA: si el agente se detiene, no debe
+            # quedar el modelo ocupando RAM/VRAM. Ollama acepta keep_alive=0
+            # como senial de descarga inmediata.
+            add_log("[EMERGENCIA] Solicitando descarga de modelos Ollama (keep_alive=0)...")
+            _unload_ollama_models()
+            # Reset inmediato del snapshot para que el dashboard refleje
+            # "sin modelo" sin esperar al siguiente ciclo del monitor.
+            global ollama_metrics
+            ollama_metrics = {
+                "connected": ollama_metrics.get("connected", False),
+                "version": ollama_metrics.get("version"),
+                "model_name": None, "vram_mb": 0, "size_mb": 0,
+                "expires_in_seconds": 0, "loaded_models": 0,
+                "tokens_per_second": 0.0, "total_duration_ms": 0,
+                "last_metric_age_seconds": None, "error": None,
+            }
+
+            add_log("[OK] ✅ Subprocesos terminados, modelo Ollama liberado. Estado del servidor reseteado.")
             log_buffer = ["[RESET] Agente detenido y estado reiniciado a CERO. Listo para una nueva auditoría."]
 
             self._send_json({
-                "message": "Agente detenido. Estado reiniciado a CERO — listo para trabajar desde cero.",
+                "message": "Agente detenido. Modelo IA liberado. Estado reiniciado a CERO.",
                 "reset": True
             })
             return

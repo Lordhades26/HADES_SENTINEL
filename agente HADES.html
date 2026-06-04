@@ -1250,7 +1250,7 @@ Esperando órdenes...</div>
                             <div class="ai-bar-track"><div class="ai-bar-fill purple" id="aiProgressBar"></div></div>
                         </div>
                         <div class="ai-metric-row">
-                            <div class="ai-metric-label"><span>Memoria VRAM</span><span class="ai-metric-value" id="aiMemVal">— MB</span></div>
+                            <div class="ai-metric-label"><span>Memoria del modelo</span><span class="ai-metric-value" id="aiMemVal">— MB</span></div>
                             <div class="ai-bar-track"><div class="ai-bar-fill amber" id="aiMemBar"></div></div>
                         </div>
                     </div>
@@ -1536,7 +1536,7 @@ Esperando órdenes...</div>
             if (rows[0]) rows[0].textContent = 'Modelo activo';
             if (rows[1]) rows[1].textContent = 'Tokens/s (última inferencia)';
             if (rows[2]) rows[2].textContent = 'Keep-Alive restante';
-            if (rows[3]) rows[3].textContent = 'VRAM en uso';
+            if (rows[3]) rows[3].textContent = 'Memoria del modelo';
         })();
 
         // Capacidad asumida para normalizar barras (ajustable por entorno).
@@ -1590,15 +1590,24 @@ Esperando órdenes...</div>
                 aiProgressVal.textContent = '—';
             }
 
-            // VRAM real
-            aiMemVal.textContent = vramMb > 0 ? `${vramMb} MB` : '0 MB';
-            aiMemBar.style.width = Math.min((vramMb / AI_VRAM_CAPACITY_MB) * 100, 100) + '%';
+            // Memoria del modelo: si Ollama lo cargo en GPU mostramos VRAM,
+            // si lo cargo en CPU (iGPU sin VRAM suficiente) mostramos el tamano
+            // total del modelo en RAM. La barra usa el max contra la capacidad.
+            const memMb  = vramMb > 0 ? vramMb : sizeMb;
+            const memTag = vramMb > 0 ? 'VRAM' : 'RAM';
+            aiMemVal.textContent = memMb > 0 ? `${memMb} MB (${memTag})` : '— MB';
+            aiMemBar.style.width = Math.min((memMb / AI_VRAM_CAPACITY_MB) * 100, 100) + '%';
 
-            // Estado: GENERANDO si hubo inferencia en los últimos 6s, MODELO CARGADO si
-            // hay modelo en VRAM, EN ESPERA si Ollama está vivo pero sin modelos.
-            const generating = ageSec !== null && ageSec <= 6 && tps > 0;
+            // Estado: GENERANDO si los logs del backend indican inferencia activa
+            // AHORA (bandera _aiBusyByLog) o si hubo inferencia en los últimos 6s
+            // segun polling. MODELO CARGADO si hay modelo en VRAM. EN ESPERA si
+            // Ollama está vivo pero sin modelos.
+            const generating = _aiBusyByLog || (ageSec !== null && ageSec <= 6 && tps > 0);
             if (generating) {
-                setAiStatus(`GENERANDO — ${d.model_name} · ${tps.toFixed(1)} t/s`, 'var(--neon-accent)', 'active');
+                const label = _aiBusyByLog
+                    ? `GENERANDO — ${d.model_name} · IA procesando...`
+                    : `GENERANDO — ${d.model_name} · ${tps.toFixed(1)} t/s`;
+                setAiStatus(label, 'var(--neon-accent)', 'active');
                 [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.add('active'));
             } else if (hasModel) {
                 setAiStatus(`MODELO CARGADO · v${d.version || '?'}`, '#ff9f00', 'idle');
@@ -1621,14 +1630,34 @@ Esperando órdenes...</div>
             }
         }
 
-        // Stubs de compatibilidad: el resto del código sigue llamando a estas
-        // funciones desde el flujo de logs/scan; ahora son no-ops porque el
-        // panel se alimenta del polling real. resetAiPanel hace un refresh
-        // inmediato para que el usuario vea el estado al arrancar un scan.
-        function activateAiPanel()    { /* gestionado por polling /api/ollama */ }
-        function completeAiPanel()    { /* gestionado por polling /api/ollama */ }
-        function resetAiPanel()       { fetchOllamaMetrics(); }
-        function checkAiPhaseFromLog(_msg) { /* gestionado por polling /api/ollama */ }
+        // Indicador en vivo "Ollama generando AHORA". El polling /api/ollama solo
+        // refleja la metrica POST-inferencia (last_metric_age <= 6s), por lo que
+        // durante los 1-3 min que dura una inferencia el panel no mostraba nada.
+        // Marcamos via logs del backend, y desmarcamos cuando llega OLLAMA_METRICS
+        // o el agente finaliza. applyOllamaSnapshot respeta esta bandera.
+        let _aiBusyByLog = false;
+        function _markAiBusy(label) {
+            _aiBusyByLog = true;
+            setAiStatus(label, 'var(--neon-accent)', 'active');
+            [aiModelBar, aiTokenBar, aiProgressBar, aiMemBar].forEach(b => b.classList.add('active'));
+        }
+        function _markAiIdle() {
+            _aiBusyByLog = false;
+            fetchOllamaMetrics();  // resincroniza inmediato con polling real
+        }
+        function activateAiPanel()    { _markAiBusy('GENERANDO — IA en curso...'); }
+        function completeAiPanel()    { _markAiIdle(); }
+        function resetAiPanel()       { _markAiIdle(); }
+        function checkAiPhaseFromLog(msg) {
+            const m = (msg || '').toLowerCase();
+            if (m.includes('analizando') && m.includes('ia')) {
+                _markAiBusy('GENERANDO — Análisis de tráfico IA...');
+            } else if (m.includes('analisis consultivo') || m.includes('análisis consultivo')) {
+                _markAiBusy('GENERANDO — IA analizando host...');
+            } else if (m.includes('ollama_metrics') || m.includes('agente finalizado')) {
+                _markAiIdle();
+            }
+        }
 
         // Polling real cada 3s + carga inicial inmediata
         setInterval(fetchOllamaMetrics, 3000);
