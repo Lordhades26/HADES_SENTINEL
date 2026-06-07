@@ -2,6 +2,11 @@
 # Contienen el reconocimiento real de la red (IPs, MACs, puertos, SO, informes).
 informes/
 
+# ─── Estrategia de marketing — INTERNA, NO PUBLICAR ───────────────────────────
+# Plan SEO, calendario de lanzamiento, DMs, posts redactados. Es el playbook
+# que aplicamos PARA promocionar el repo, no contenido del repo.
+MARKETING/
+
 # ─── Pie de firma personal — DATOS PERSONALES, NO PUBLICAR ───────────────────
 # Nombre, cargo y QR de acreditaciones del analista. Se quedan SOLO en local;
 # el informe en GitHub se genera sin firma. (hades_report_docx los carga si existen.)

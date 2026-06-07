@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & Discussion / Preguntas y debate
+    url: https://github.com/Lordhades26/HADES_SENTINEL/discussions
+    about: For usage questions, ideas, and general discussion — please use Discussions instead of opening an issue.
+  - name: 🔐 Security Vulnerability / Vulnerabilidad de seguridad
+    url: https://github.com/Lordhades26/HADES_SENTINEL/security/advisories/new
+    about: Report a security vulnerability privately. Do NOT file a public issue for security bugs.
+  - name: 📖 Read the User Manual / Lee el manual de usuario
+    url: https://github.com/Lordhades26/HADES_SENTINEL/blob/main/MANUAL_USUARIO.md
+    about: Most "how do I..." questions are already answered here.

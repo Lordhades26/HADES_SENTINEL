@@ -1,0 +1,97 @@
+name: 🐛 Bug Report
+description: Report a reproducible bug in HADES SENTINEL
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out the sections below — incomplete reports will be closed.
+
+        🇪🇸 Gracias por reportar un bug. Por favor completa todas las secciones — reportes incompletos serán cerrados.
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Pre-flight checks / Verificaciones previas
+      description: Please confirm these before submitting.
+      options:
+        - label: I searched [existing issues](https://github.com/Lordhades26/HADES_SENTINEL/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I am running HADES SENTINEL on **Windows 10 or 11** (the only supported OS).
+          required: true
+        - label: I confirm the external tools are installed (Nmap, Tshark, OpenSSL, Nuclei, Ollama).
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened? / ¿Qué pasó?
+      description: A clear and concise description of the bug.
+      placeholder: When I run LANZAR_DASHBOARD.bat, the dashboard opens but the network map never loads...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce / Pasos para reproducir
+      description: Exact, numbered steps that anyone can follow.
+      placeholder: |
+        1. Clone repo
+        2. Run `LANZAR_DASHBOARD.bat`
+        3. Open browser at http://127.0.0.1:8080
+        4. Click "Iniciar"
+        5. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / Comportamiento esperado
+      placeholder: The network map should populate within 30 seconds after starting the scan.
+    validations:
+      required: true
+
+  - type: input
+    id: hades-commit
+    attributes:
+      label: HADES SENTINEL commit / version
+      description: Run `git rev-parse --short HEAD` in the repo directory.
+      placeholder: "fa32050"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: Run `python --version`
+      placeholder: "Python 3.11.4"
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Run `winver` and paste the build number.
+      placeholder: "Windows 11 Pro 22H2 (build 22621.3007)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / Logs relevantes
+      description: |
+        Paste the relevant output from `hades_run.err`, `hades_run.out`, or the dashboard console.
+        ⚠️ **Redact any IPs, MACs, hostnames, or other identifying network data before pasting.**
+      render: text
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context / Contexto adicional
+      description: Screenshots (with sensitive data redacted), GPU/RAM, network setup, AV/EDR active, etc.

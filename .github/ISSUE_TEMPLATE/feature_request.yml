@@ -1,0 +1,69 @@
+name: ✨ Feature Request
+description: Suggest a new feature or improvement for HADES SENTINEL
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to propose a feature. Please keep it focused: one feature per issue.
+
+        🇪🇸 Gracias por proponer una mejora. Por favor mantén el foco: una sola feature por issue.
+
+  - type: checkboxes
+    id: prereqs
+    attributes:
+      label: Pre-flight checks / Verificaciones previas
+      options:
+        - label: I searched [existing issues](https://github.com/Lordhades26/HADES_SENTINEL/issues?q=is%3Aissue) and this is not a duplicate.
+          required: true
+        - label: I checked [Discussions](https://github.com/Lordhades26/HADES_SENTINEL/discussions) for prior conversation about this idea.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve? / ¿Qué problema resuelve?
+      description: Start with the PAIN, not the solution. What can't you do today?
+      placeholder: "When I run an audit on a /16 network, the dashboard freezes because all results render at once instead of streaming."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / Solución propuesta
+      description: What should HADES do differently? Be concrete.
+      placeholder: "Stream results to the dashboard via SSE/WebSocket as each host completes, instead of buffering until the entire scan ends."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / Alternativas consideradas
+      description: What other approaches did you think about and reject? Why?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which area does this affect? / ¿Qué área afecta?
+      multiple: true
+      options:
+        - Dashboard UI (agente HADES.html)
+        - Server / API (hades_server.py)
+        - Scan engine (hades_win_master_advanced.py)
+        - Pipeline orchestrator (hades_surveillance_advanced.py)
+        - ISO 27001 report generator (hades_report_docx.py)
+        - Authentication (hades_auth.py)
+        - Installation / Setup
+        - Documentation
+        - Other (please describe)
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context / Contexto adicional
+      description: Screenshots, mockups, links to similar features in other tools, etc.
