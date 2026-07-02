@@ -1,0 +1,11 @@
+# Dependencias Python de HADES SENTINEL (pip).
+# El resto del agente usa solo la librería estándar. Las herramientas de escaneo
+# (nmap, nuclei, tshark, openssl) son binarios externos, no paquetes pip.
+#
+# Instalar con:  python -m pip install -r requirements.txt
+#
+# Versiones probadas en Python 3.10 (2026-07-02) indicadas como piso mínimo.
+
+webauthn>=3.0.0        # Login del dashboard con Windows Hello / passkeys (hades_auth.py)
+python-docx>=1.2.0     # Informe ejecutivo ISO 27001 en .docx (hades_report_docx.py)
+psutil>=7.2.2          # Métricas de procesos para el panel del dashboard (hades_server.py)
