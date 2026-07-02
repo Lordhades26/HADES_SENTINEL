@@ -1,9 +1,22 @@
 import json
+import re
 import subprocess
 import sys
 import shutil
 import os
+import urllib.request
 from typing import Dict, Optional
+
+# Modelo IA centralizado (sobrescribible por entorno). Default HADES-DOLPHIN.
+HADES_MODEL = os.environ.get("HADES_MODEL", "HADES-DOLPHIN:latest")
+OLLAMA_URL = os.environ.get("HADES_OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
+
+# Validación de objetivos antes de pasarlos a un comando con shell=True.
+_TARGET_RE = re.compile(r"^[A-Za-z0-9._:/-]+$")
+
+def _safe_target(value: str) -> Optional[str]:
+    s = str(value).strip()
+    return s if _TARGET_RE.match(s) else None
 
 # Common Windows paths for security tools
 WIN_PATHS = [
@@ -63,6 +76,26 @@ def run_tool(tool: str, args: str):
     except Exception as e:
         return str(e)
 
+def ollama_query(model: str, prompt: str) -> str:
+    """Consulta a Ollama vía API HTTP (NO por shell). El antiguo
+    'ollama run {model} "{prompt}"' con shell=True permitía inyección de comandos
+    a través del prompt (comillas, &&, |). La API acepta el prompt como dato JSON."""
+    try:
+        payload = json.dumps({
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            OLLAMA_URL, data=payload,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=120) as res:
+            data = json.loads(res.read().decode("utf-8"))
+        return data.get("response", "") or "[IA] Sin respuesta del modelo."
+    except Exception as e:
+        return f"Error IA: {e}"
+
 def get_tools_status():
     tools = ['nmap', 'nikto', 'openssl', 'tshark', 'curl', 'python3', 'ollama', 'perl']
     status = {}
@@ -80,16 +113,21 @@ def handle_request(request: Dict):
     if method == "list_tools":
         return get_tools_status()
     elif method == "nmap_scan":
-        target = params.get("target", "127.0.0.1")
+        target = _safe_target(params.get("target", "127.0.0.1"))
+        if not target:
+            return "Error: invalid target (IP, hostname or CIDR expected)."
         return run_tool("nmap", f"-sV -T4 {target}")
     elif method == "nikto_audit":
-        url = params.get("url")
-        if not url: return "Error: URL parameter required."
+        url = _safe_target(params.get("url", ""))
+        if not url:
+            return "Error: valid URL parameter required."
         return run_tool("nikto", f"-h {url} -maxtime 60")
     elif method == "ollama_query":
         prompt = params.get("prompt")
-        model = params.get("model", "HADES-AUTO:latest")
-        return run_tool("ollama", f"run {model} \"{prompt}\"")
+        if not prompt:
+            return "Error: prompt parameter required."
+        model = params.get("model") or HADES_MODEL
+        return ollama_query(model, str(prompt))
     else:
         return {"error": f"Method '{method}' not found"}
 
