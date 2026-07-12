@@ -735,11 +735,12 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "El agente ya se encuentra activo."}, code=400)
                 return
 
-            # Leer parámetros del cuerpo de la petición
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            params = json.loads(post_data.decode('utf-8'))
-            
+            # Leer parámetros del cuerpo de la petición. Se usa el lector robusto
+            # _read_json_body(): tolera Content-Length ausente o cuerpo JSON
+            # malformado devolviendo {} en vez de lanzar KeyError/ValueError, lo
+            # que antes tumbaba el hilo del handler (defecto de disponibilidad).
+            params = self._read_json_body()
+
             target = params.get("target", "auto")
             if not target or not target.strip():
                 target = "auto"

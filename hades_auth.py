@@ -176,7 +176,7 @@ def begin_registration(authenticated_sid: str = None) -> dict:
         challenge=challenge,
         attestation=AttestationConveyancePreference.NONE,
         authenticator_selection=AuthenticatorSelectionCriteria(
-            user_verification=UserVerificationRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
         ),
     )
     with _lock:
@@ -203,7 +203,7 @@ def complete_registration(chal_id: str, credential: dict) -> str:
         expected_challenge=entry["challenge"],
         expected_rp_id=RP_ID,
         expected_origin=EXPECTED_ORIGINS,
-        require_user_verification=False,
+        require_user_verification=True,
     )
     creds = _credentials_load()
     creds.append({
@@ -234,7 +234,7 @@ def begin_authentication() -> dict:
         rp_id=RP_ID,
         challenge=challenge,
         allow_credentials=allow,
-        user_verification=UserVerificationRequirement.PREFERRED,
+        user_verification=UserVerificationRequirement.REQUIRED,
     )
     with _lock:
         _pending[chal_id] = {
@@ -267,7 +267,7 @@ def complete_authentication(chal_id: str, credential: dict) -> str:
         expected_origin=EXPECTED_ORIGINS,
         credential_public_key=_b64url_decode(matched["public_key"]),
         credential_current_sign_count=matched["sign_count"],
-        require_user_verification=False,
+        require_user_verification=True,
     )
     matched["sign_count"] = verified.new_sign_count
     matched["last_login_at"] = int(time.time())
