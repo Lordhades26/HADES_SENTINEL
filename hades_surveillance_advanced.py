@@ -319,9 +319,20 @@ class HadesSurveillance:
         audited_ok = 0
         for idx, ip in enumerate(chosen_ips, 1):
             log(f"[{idx}/{len(chosen_ips)}] Auditoria completa → {ip}", "SCAN")
+
+            # La evidencia determinista (Nmap + Nuclei + TLS) se persiste EN CUANTO
+            # está lista, sin esperar al análisis IA. Si el modelo local está lento
+            # o caído, el informe ya contiene los hallazgos técnicos del host en vez
+            # de quedarse mudo (fallo observado el 25-07-2026: la Fase 4 no dejaba
+            # rastro en disco porque el guardado ocurría después de la IA).
+            def _persistir_tecnica(parcial, _ip=ip):
+                _persist(master_report + parcial +
+                         "\n\n_[análisis IA en curso para este host]_\n\n---\n\n")
+                log(f"Evidencia técnica de {_ip} asegurada en disco.", "OK")
+
             try:
                 # Nmap deep + Nuclei web + TLS + IA
-                full_report = self.mcp.full_audit(ip)
+                full_report = self.mcp.full_audit(ip, on_technical_ready=_persistir_tecnica)
                 master_report += full_report + "\n\n---\n\n"
                 audited_ok += 1
                 log(f"Host {ip} auditado y consolidado en el informe único.", "OK")
