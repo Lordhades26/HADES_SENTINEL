@@ -14,6 +14,8 @@ Mejorar HADES SENTINEL. En esta sesión: que la **Fase 1 de descubrimiento** fun
 - **Rutas estáticas agregadas (2026-08-27):** primero `10.77.0.0/24` y luego ampliada a `10.77.0.0/16`, ambas `-NextHop 10.77.140.1 -InterfaceIndex 10` (ActiveStore). Todo `10.77.0.0/16` sale por el cable (verificado: `10.77.0.1` → `10.77.140.1` → `10.77.128.22` → `10.77.152.11`).
 - **Escaneo /16 COMPLETADO:** `10.77.0.0/24` exacto da 0 hosts, pero el `/16` con el motor real de SENTINEL encontró **106 hosts vivos** (65.536 IPs en 437,6 s ≈ 7,3 min) con el perfil L3 enrutado. Concentración: `10.77.128.x` (11), `100-103.x`, `143-147.x`, `152-154.x`, etc. Lista guardada en `informes\hosts_vivos_10.77.0.0-16_20260827.txt`. Env-override usado: `--min-rate 1000 --host-timeout 12s`, `HADES_DISCOVERY_TIMEOUT=1800`.
 - **Dashboard activo:** `python hades_server.py` corriendo en `http://127.0.0.1:8080` (HTTP 200, "HADES v2.2.0 | Tactical Cyber Center"), con la mejora integrada. Background task `bprmd3ygs`. Al cerrar la sesión: parada limpia (`.hades_token`, :8080 libre).
+- **Modo Custom del dashboard mejorado:** el `POST /api/scan` ya aceptaba CIDR; el problema era la UI. Arreglado en `agente HADES.html`: placeholder/ayuda correctos (el viejo `10.77.1.0/24 - 10.77.2.1/24` con guión que `validate_target` rechaza), validación en vivo (`describeTarget`: IP o CIDR, conteo de IPs, aviso naranja en rangos grandes, error rojo si el formato es inválido) y validación antes de enviar. Verificado en el navegador real (JS `node --check` OK; DOM: `/16`→"65.534 IPs — rango grande", guión→error). Así el usuario puede lanzar este tipo de escaneo enrutado desde el dashboard.
+- **Commit `c05501a`** en `fix/fase4-ia-no-bloqueante` (43 archivos, +5440/−1623, SIN push): consolida esta mejora + todo el trabajo previo pendiente de la rama. Working tree limpio.
 
 ## 3. Archivos y cambios (esta sesión)
 - `hades_win_master_advanced.py`:
@@ -37,7 +39,8 @@ Mejorar HADES SENTINEL. En esta sesión: que la **Fase 1 de descubrimiento** fun
 - Un `/16` con `--min-rate 1000` puede tardar >10 min y superar el techo de `execute` (600 s por defecto). Hay que subir `HADES_DISCOVERY_TIMEOUT` (se usó 1800 s) al escanear rangos grandes.
 
 ## 5. Próximos pasos
-1. **Leer el resultado del escaneo `/16`** (`scratchpad\hosts_16.txt`): confirmar cuántos hosts vivos hay y en qué subredes. Si hay hosts, lanzar auditoría profunda (Fase 4) sobre ellos: `python hades_surveillance_advanced.py <ip_o_subred>`.
-2. **Commit local** (sin push, respetando la regla) para fijar la mejora: el usuario lo dejó como opción abierta.
-3. Si al terminar la jornada se sale de la red institucional: recordar que las rutas `10.77.0.0/24` y `/16` quedaron en ActiveStore (no persistentes) → se van al reiniciar; volver a `route add` si se retoma. La IP fija `10.77.140.100/24` sí persiste.
-4. Continuar con otras mejoras de SENTINEL según prioridad.
+1. **Auditoría profunda de los 106 hosts** (Fase 4: puertos/versiones/Nuclei/TLS/IA): desde el dashboard en modo Custom o `python hades_surveillance_advanced.py <subred>`. OJO: el `/16` completo tardaría horas; conviene ir por subredes con más hosts (`10.77.128.0/24`, `10.77.100-103.0/24`, `10.77.143-147.0/24`).
+2. `git push` cuando el usuario lo pida (regla: nunca sin permiso). El commit `c05501a` está local en `fix/fase4-ia-no-bloqueante`.
+3. Si se sale de la red institucional: las rutas `10.77.0.0/24` y `/16` están en ActiveStore (no persistentes) → se van al reiniciar; volver a `route add 10.77.0.0 mask 255.255.0.0 10.77.140.1 if 10`. La IP fija `10.77.140.100/24` sí persiste.
+4. Al cerrar la sesión de trabajo: parada limpia del dashboard (matar `hades_server.py`/tarea `bprmd3ygs`, liberar :8080, borrar `.hades_token`).
+5. Continuar con otras mejoras de SENTINEL según prioridad.
