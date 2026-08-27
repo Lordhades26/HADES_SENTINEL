@@ -55,7 +55,6 @@ body:
         - Scan engine (hades_win_master_advanced.py)
         - Pipeline orchestrator (hades_surveillance_advanced.py)
         - ISO 27001 report generator (hades_report_docx.py)
-        - Authentication (hades_auth.py)
         - Installation / Setup
         - Documentation
         - Other (please describe)

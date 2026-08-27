@@ -4,8 +4,21 @@ HADES WIN MASTER ADVANCED v2.0
 Motor principal del agente HADES para Windows.
 Integra: Nmap (ARP), Nuclei (web vuln), Tshark, OpenSSL, cURL, Ollama IA.
 """
-import json, subprocess, sys, os, re, time, urllib.request, signal, threading
+import json, subprocess, sys, os, re, time, urllib.request, signal, threading, ipaddress
 from datetime import datetime
+from hades_ai import (
+    AI_BACKOFF_SECONDS as DEFAULT_AI_BACKOFF_SECONDS,
+    AI_BUDGET_SECONDS as DEFAULT_AI_BUDGET_SECONDS,
+    AI_RETRIES as DEFAULT_AI_RETRIES,
+    AI_TIMEOUT_SECONDS as DEFAULT_AI_TIMEOUT_SECONDS,
+    HADES_MODEL,
+    OLLAMA_URL,
+    build_generate_payload,
+    format_consultative_output,
+    safe_subprocess_env,
+)
+from hades_validation import validate_target, validate_url
+from hades_processes import terminate_process_tree
 
 # Asegurar UTF-8 en stdout/stderr SIEMPRE (este módulo usa flechas '→' y emojis en
 # los logs). Sin esto, en consolas Windows cp1252 un print lanza UnicodeEncodeError
@@ -28,7 +41,7 @@ WIN_PATHS = {
     "tshark":  r"C:\Program Files\Wireshark\tshark.exe",
     "openssl": r"C:\Program Files\OpenSSL-Win64\bin\openssl.exe",
     "nuclei":  os.path.join(_USER_HOME, "Documents", "HADES", "nuclei", "nuclei.exe"),
-    "ollama":  "http://127.0.0.1:11434/api/generate",
+    "ollama":  OLLAMA_URL,
 }
 
 # ─── MODELO IA ────────────────────────────────────────────────────────────────
@@ -36,11 +49,10 @@ WIN_PATHS = {
 # Se puede sobrescribir con la variable de entorno HADES_MODEL sin tocar el código.
 # Por defecto usa HADES-DOLPHIN (edición pentesting, dolphin3:8b) en lugar del
 # antiguo HADES-AUTO (4.7GB, lento y débil para razonamiento técnico).
-HADES_MODEL = os.environ.get("HADES_MODEL", "HADES-DOLPHIN:latest")
+# HADES_MODEL se importa desde hades_ai.py y permanece público por compatibilidad.
 
-# HADES-DOLPHIN razona dentro de <haedes_cortex>...</haedes_cortex> y puede emitir
-# bloques <memory_nexus>...</memory_nexus>. Ese andamiaje es interno del modelo y
-# NO debe aparecer en los informes: el orquestador (este agente) lo recorta.
+# Compatibilidad con modelos antiguos configurados mediante HADES_MODEL: si
+# emiten andamiaje interno, éste nunca debe aparecer en los informes.
 _SCAFFOLD_RE = re.compile(
     r"<(haedes_cortex|memory_nexus|think|thinking)>.*?</\1>",
     re.DOTALL | re.IGNORECASE,
@@ -59,27 +71,70 @@ def strip_model_scaffolding(text):
             cleaned = cleaned[:i]
     return cleaned.strip()
 
-# ─── VALIDACIÓN DE OBJETIVOS (anti inyección de argumentos/shell) ─────────────
-# execute() usa shell=True; los targets se interpolan en la línea de comandos.
-# Aunque el operador es de confianza, validar el formato evita que un valor con
-# metacaracteres (& | ; $ `) rompa el comando o inyecte otro.
-_IP_RE   = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-_CIDR_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}$")
-_HOST_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-_URL_RE  = re.compile(r"^https?://[A-Za-z0-9._:/-]+$")
-
 def _valid_target(value, cidr_ok=True):
     """IP, CIDR (si cidr_ok) o hostname simple. Devuelve el valor o None."""
-    s = str(value).strip()
-    if _IP_RE.match(s) or _HOST_RE.match(s):
-        return s
-    if cidr_ok and _CIDR_RE.match(s):
-        return s
-    return None
+    return validate_target(value, cidr_ok=cidr_ok)
 
 def _valid_url(value):
-    s = str(value).strip()
-    return s if _URL_RE.match(s) else None
+    return validate_url(value)
+
+# ─── DESCUBRIMIENTO ADAPTATIVO on-link / enrutado ─────────────────────────────
+# El ARP (-PR) solo alcanza hosts de la MISMA subred (capa 2): no cruza un router.
+# Para auditar una red enrutada (p. ej. 10.77.0.0/24 desde otra subred) hay que
+# usar sondas de capa 3. Estos helpers deciden el perfil correcto según dónde caiga
+# el objetivo respecto a las subredes directamente conectadas del equipo.
+def _local_ipv4_networks():
+    """Subredes IPv4 conectadas (con su prefijo real) del equipo, como ip_network.
+    Usa psutil (ya dependencia del proyecto) para leer address+netmask por interfaz.
+    Si psutil no está disponible, devuelve [] y el objetivo se tratará como enrutado."""
+    nets = []
+    try:
+        import psutil, socket as _socket
+        for _iface, addrs in psutil.net_if_addrs().items():
+            for a in addrs:
+                if getattr(a, "family", None) == _socket.AF_INET and a.address and a.netmask:
+                    try:
+                        nets.append(ipaddress.ip_network(f"{a.address}/{a.netmask}", strict=False))
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+    return nets
+
+def _target_is_onlink(target):
+    """True si el objetivo es alcanzable por capa 2 (ARP viable): una IP o CIDR
+    contenido POR COMPLETO en alguna subred local (subnet_of). Un objetivo que
+    excede la subred local —p. ej. un /16 que engloba tu /24— es mayormente
+    enrutado, así que se trata como L3 (ARP solo vería la parte local y perdería
+    el resto). Hostnames y rangos no-CIDR también van por L3 (elección segura)."""
+    try:
+        tnet = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        return False
+    return any(tnet.version == lnet.version and tnet.subnet_of(lnet)
+               for lnet in _local_ipv4_networks())
+
+# Perfiles de descubrimiento de la Fase 1, configurables por entorno para redes
+# lentas o auditorías más agresivas.
+#   • On-link: ARP a L2, imbatible en fiabilidad y velocidad dentro de la propia subred.
+#   • Enrutado: como el ARP no cruza el router, se combinan sondas ICMP (echo +
+#     timestamp), TCP SYN a puertos comunes, TCP ACK (atraviesa filtros stateless
+#     distinto que SYN) y UDP a 53/137/161, con timing acotado (--host-timeout,
+#     --max-retries 1, --min-rate) para no arrastrarse en hosts inexistentes o
+#     filtrados. Medido: un /24 enrutado se resuelve en ~26 s en lugar de colgarse.
+DISCOVERY_ONLINK_FLAGS = os.environ.get(
+    "HADES_DISCOVERY_ONLINK_FLAGS",
+    "-sn -PR -PE -PS22,80,443,445,8080,8443")
+DISCOVERY_ROUTED_FLAGS = os.environ.get(
+    "HADES_DISCOVERY_ROUTED_FLAGS",
+    "-sn -n -PE -PP "
+    "-PS21,22,23,25,53,80,110,135,139,143,443,445,993,995,1723,3306,3389,5900,8080,8443 "
+    "-PA80,443,3389 -PU53,137,161 "
+    "-T4 --max-retries 1 --min-rate 200 --host-timeout 20s")
+# Techo del subproceso de descubrimiento (mayor que el presupuesto interno de Nmap).
+# El barrido enrutado acotado termina muy por debajo; este tope solo protege ante
+# redes patológicas para que la fase no quede colgada indefinidamente.
+DISCOVERY_SUBPROC_TIMEOUT = int(os.environ.get("HADES_DISCOVERY_TIMEOUT", "600"))
 
 # ─── PLANTILLAS NUCLEI ────────────────────────────────────────────────────────
 # El agente sólo audita objetivos HTTP/HTTPS, así que únicamente necesita las
@@ -93,26 +148,18 @@ current_process = None
 
 def clean_up_current_process():
     global current_process
-    if current_process is not None:
-        try:
-            # En Windows, para matar un proceso iniciado con shell=True y sus hijos,
-            # lo más seguro y rápido es usar taskkill con su PID árbol (/t) y de forma forzada (/f)
-            pid = current_process.pid
-            subprocess.run(f"taskkill /f /t /pid {pid}", shell=True, capture_output=True)
-        except Exception:
-            try:
-                current_process.kill()
-            except Exception:
-                pass
+    process = current_process
+    if process is None:
+        return True
+    stopped = terminate_process_tree(process, timeout=5)
+    if process.poll() is not None:
         current_process = None
+    return stopped
 
 def signal_handler(sig, frame):
     log("\n[EMERGENCIA] Señal de interrupción recibida (Ctrl+C). Finalizando procesos de inmediato...", "WARN")
-    clean_up_current_process()
-    try:
-        subprocess.run("taskkill /f /im nmap.exe /im tshark.exe /im nuclei.exe /im openssl.exe", shell=True, capture_output=True)
-    except Exception:
-        pass
+    if not clean_up_current_process():
+        log("[ERROR] No se pudo confirmar la terminación completa del árbol.", "WARN")
     sys.exit(1)
 
 # Registrar manejadores de señales
@@ -134,7 +181,8 @@ def execute(cmd, timeout=300):
         current_process = subprocess.Popen(
             cmd, shell=True,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace"
+            text=True, encoding="utf-8", errors="replace",
+            env=safe_subprocess_env()
         )
 
         # Leer stdout y stderr en threads separados para no bloquear el hilo principal
@@ -164,13 +212,17 @@ def execute(cmd, timeout=300):
             elapsed += 0.1
             if elapsed >= timeout:
                 log(f"[TIMEOUT] Comando excedió {timeout}s. Terminando (se conserva la salida parcial)...", "WARN")
-                clean_up_current_process()
+                stopped = clean_up_current_process()
                 # Conservar lo capturado hasta el corte: si Nuclei/Nmap ya encontró
                 # hallazgos, NO deben perderse por agotar el tope de tiempo.
                 t_out.join(timeout=3)
                 t_err.join(timeout=3)
                 partial = "".join(stdout_chunks)
-                current_process = None
+                if not stopped:
+                    return partial + (
+                        f"\n[ERROR] No se pudo confirmar la terminación del árbol "
+                        f"tras el timeout: {cmd}"
+                    )
                 return partial + f"\n[TIMEOUT] Comando excedió {timeout}s; resultados PARCIALES: {cmd}"
 
         # Esperar a que los threads de lectura terminen (máximo 5s)
@@ -208,10 +260,10 @@ class HadesMCP:
     #   - presupuesto total de IA para toda la corrida,
     #   - marca de servicio caído que cortocircuita los hosts siguientes,
     #   - timeout y reintentos configurables por entorno.
-    AI_TIMEOUT_DEFAULT = int(os.environ.get("HADES_AI_TIMEOUT", "120"))
-    AI_RETRIES_DEFAULT = int(os.environ.get("HADES_AI_RETRIES", "1"))
-    AI_BUDGET_DEFAULT  = int(os.environ.get("HADES_AI_BUDGET", "600"))
-    AI_BACKOFF_SECONDS = int(os.environ.get("HADES_AI_BACKOFF", "3"))
+    AI_TIMEOUT_DEFAULT = DEFAULT_AI_TIMEOUT_SECONDS
+    AI_RETRIES_DEFAULT = DEFAULT_AI_RETRIES
+    AI_BUDGET_DEFAULT  = DEFAULT_AI_BUDGET_SECONDS
+    AI_BACKOFF_SECONDS = DEFAULT_AI_BACKOFF_SECONDS
 
     def __init__(self):
         self.ai_unavailable = False       # el servicio se declaró caído en esta corrida
@@ -219,16 +271,22 @@ class HadesMCP:
         self.ai_spent_seconds = 0.0
         self.ai_skip = os.environ.get("HADES_SKIP_AI", "").strip() == "1"
 
-    # ── Nmap: descubrimiento agresivo por ARP ──────────────────────────────
+    # ── Nmap: descubrimiento adaptativo (ARP on-link / L3 enrutado) ─────────
     def nmap_discovery(self, target="192.168.1.0/24"):
         if not os.path.exists(WIN_PATHS["nmap"]):
             return f"[NMAP] Binario no encontrado en {WIN_PATHS['nmap']}"
         target = _valid_target(target, cidr_ok=True)
         if target is None:
             return "[NMAP] Objetivo inválido (se esperaba IP, hostname o CIDR)."
-        log(f"Nmap ARP discovery → {target}")
-        cmd = f'"{WIN_PATHS["nmap"]}" -sn -PR -PE -PS22,80,443,445,8080,8443 {target}'
-        return execute(cmd)
+        # Elegir el perfil según dónde caiga el objetivo: ARP a L2 solo sirve en la
+        # propia subred; un objetivo enrutado necesita sondas L3 acotadas o Nmap se
+        # arrastra hasta agotar el techo del subproceso y devuelve una lista vacía.
+        onlink = _target_is_onlink(target)
+        flags  = DISCOVERY_ONLINK_FLAGS if onlink else DISCOVERY_ROUTED_FLAGS
+        modo   = "ARP L2 on-link" if onlink else "L3 enrutado (cruza router)"
+        log(f"Nmap discovery [{modo}] → {target}")
+        cmd = f'"{WIN_PATHS["nmap"]}" {flags} {target}'
+        return execute(cmd, timeout=DISCOVERY_SUBPROC_TIMEOUT)
 
     # Perfil EQUILIBRADO: top-1000 puertos (por defecto de Nmap) + versión de servicio
     # + detección de SO, con reintentos y timeout por host para que un host lento o
@@ -433,18 +491,10 @@ class HadesMCP:
         # ese endpoint tarda y marcaría "no disponible" por error. En su lugar se
         # llama directo con timeout acotado y se declara caído el servicio solo tras
         # agotar los intentos, decisión que vale para el resto de la corrida.
-        # num_predict acota la respuesta. Se subió de 450 → 1536: con 450 tokens los
-        # análisis estructurados se cortaban a media frase (la "Interpretación IA" del
-        # tráfico quedaba incompleta en la sección 5 — MITIGACIÓN). 1536 da margen para
-        # que el modelo CIERRE su respuesta por sí mismo (emite EOS mucho antes en la
-        # práctica, así que no penaliza la velocidad real). keep_alive lo mantiene caliente.
-        payload = json.dumps({
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "keep_alive": "30m",
-            "options": {"num_predict": 1536, "temperature": 0.35}
-        }).encode()
+        # Contrato compartido: salida acotada, temperatura determinista y TTL corto.
+        payload = json.dumps(
+            build_generate_payload(prompt, model=model)
+        ).encode("utf-8")
         req = urllib.request.Request(
             WIN_PATHS["ollama"], data=payload,
             headers={"Content-Type": "application/json"}
@@ -479,7 +529,7 @@ class HadesMCP:
                 f"intento(s): {last}). La auditoría técnica de este host se conserva íntegra.")
 
     # ── Grounding: hechos deterministas extraídos del escaneo ──────────────
-    # Revisión del 25-07-2026 sobre HADES-DOLPHIN: el modelo no inventa datos,
+    # Revisión del 25-07-2026 sobre el modelo anterior: no inventaba datos,
     # pero al recibir la salida cruda de Nmap omitía parte de la evidencia
     # (el puerto filtrado, un puerto alto y el sistema operativo) y concluia que un
     # servicio SSH de 2019 "esta actualizado", con severidad Baja. Se le dan los hechos
@@ -659,7 +709,9 @@ class HadesMCP:
             f"<scan_data>\n{combined[:4500]}\n</scan_data>"
         )
         ai_out = self.ai_analysis(ai_prompt)
-        report.append("\n[ANÁLISIS IA HADES]\n" + ai_out)
+        report.append(
+            "\n[ANÁLISIS IA HADES]\n" + format_consultative_output(ai_out)
+        )
 
         # Control determinista sobre la salida del modelo: la IA es consultiva y
         # su cobertura se verifica contra los hechos del escaneo. Los avisos van

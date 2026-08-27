@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 import os, sys, json, time, shutil, subprocess, argparse, re
 from datetime import datetime
+from hades_ai import (
+    AI_TIMEOUT_SECONDS,
+    HADES_MODEL,
+    OLLAMA_URL,
+    build_generate_payload,
+    safe_subprocess_env,
+)
+from hades_ollama_runtime import ensure_ollama_available
+from hades_validation import validate_target
 
 HADES_VERSION = "1.3.0"
 
-# Modelo IA centralizado (sobrescribible por entorno). Default HADES-DOLPHIN.
-HADES_MODEL = os.environ.get("HADES_MODEL", "HADES-DOLPHIN:latest")
-
-# Validación de objetivos antes de interpolarlos en un comando con shell=True.
-_TARGET_RE = re.compile(r"^[A-Za-z0-9._:/-]+$")
+# Modelo y endpoint centralizados (sobrescribibles por entorno).
+# HADES_MODEL se importa desde hades_ai.py y permanece público por compatibilidad.
 
 def _safe_target(value):
-    s = str(value).strip()
-    return s if _TARGET_RE.match(s) else None
+    return validate_target(value, cidr_ok=True)
 
-# HADES-DOLPHIN razona en <haedes_cortex>...</haedes_cortex> y puede emitir
-# <memory_nexus>...</memory_nexus>; ese andamiaje interno no debe aparecer en la salida.
+# Compatibilidad con wrappers antiguos que emitían andamiaje interno.
 _SCAFFOLD_RE = re.compile(
     r"<(haedes_cortex|memory_nexus|think|thinking)>.*?</\1>",
     re.DOTALL | re.IGNORECASE,
@@ -93,26 +97,36 @@ def log(msg, level="INFO"):
 
 def run_cmd(cmd, timeout=180):
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout, encoding='utf-8', errors='replace')
+        r = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout,
+            encoding='utf-8', errors='replace', env=safe_subprocess_env()
+        )
         return r.stdout, r.stderr, r.returncode
     except Exception as e:
         return "", str(e), -1
 
 class HadesEngine:
-    def __init__(self):
+    def __init__(self, ensure_runtime=ensure_ollama_available):
         self.tools = detect_tools()
-        self.ollama_url = "http://127.0.0.1:11434/api/generate"
+        self.ollama_url = OLLAMA_URL
+        self._ensure_runtime = ensure_runtime
+        self._runtime_status = None
 
-    def _has(self, t):
-        return t in self.tools
+    def _ensure_ai_runtime(self):
+        if self._runtime_status is None:
+            self._runtime_status = self._ensure_runtime()
+        return self._runtime_status
 
     def _ask(self, prompt, model=None):
+        runtime = self._ensure_ai_runtime()
+        if runtime.state not in {"healthy", "started"}:
+            return f"Error IA: {runtime.detail}"
         model = model or HADES_MODEL
-        payload = {"model": model, "prompt": prompt, "stream": False}
+        payload = build_generate_payload(prompt, model=model)
         try:
             import urllib.request
             req = urllib.request.Request(self.ollama_url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=30) as res:
+            with urllib.request.urlopen(req, timeout=AI_TIMEOUT_SECONDS) as res:
                 data = json.loads(res.read().decode('utf-8'))
             self._record_ollama_metrics(model, data)
             return strip_model_scaffolding(data.get("response", ""))

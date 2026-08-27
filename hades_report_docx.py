@@ -164,13 +164,14 @@ def parse_master_report(md):
 def _parse_host_block(ip, blk):
     host = {
         "ip": ip, "status": "desconocido", "mac": "", "vendor": "",
-        "os": "", "ports": [], "cves": [], "nuclei": [], "ai": "", "risk": "INFORMATIVO",
+        "os": "", "ports": [], "cves_confirmados": [], "nuclei": [],
+        "texto_ia": "", "risk": "INFORMATIVO",
         "latency": "", "traceroute": [], "device_type": "Desconocido",
     }
 
     # Sección NMAP
     nmap_m = re.search(r"\[NMAP\](.*?)(?:\[NUCLEI\]|\[SSL/TLS\]|\[ANÁLISIS IA HADES\]|$)", blk, re.DOTALL)
-    nmap_txt = nmap_m.group(1) if nmap_m else blk
+    nmap_txt = nmap_m.group(1) if nmap_m else ""
 
     # Estado del host
     if re.search(r"Host seems down|0 hosts up", nmap_txt):
@@ -208,22 +209,34 @@ def _parse_host_block(ip, blk):
                     "service": service, "version": (version or "").strip(),
                 })
 
-    # CVEs (de scripts NSE de Nmap o de cualquier parte del bloque)
-    host["cves"] = sorted(set(c.upper() for c in CVE_RE.findall(blk)))
-
     # Hallazgos Nuclei
     nu_m = re.search(r"\[NUCLEI\](.*?)(?:\[SSL/TLS\]|\[ANÁLISIS IA HADES\]|$)", blk, re.DOTALL)
+    nuclei_lines = []
     if nu_m:
         for line in nu_m.group(1).splitlines():
             line = line.strip()
             sev = re.match(r"\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\]", line, re.IGNORECASE)
             if sev:
                 host["nuclei"].append(line)
+                nuclei_lines.append(line)
+
+    # Procedencia estricta: Nmap sólo confirma CVE en salida de scripts NSE
+    # (líneas "|" / "|_"), no en banners de servicios controlables por el host.
+    # Nuclei sólo confirma CVE en findings estructurados con severidad. El bloque
+    # de IA queda fuera de ambas fuentes por construcción.
+    nmap_script_lines = [
+        line for line in nmap_txt.splitlines()
+        if line.lstrip().startswith("|")
+    ]
+    cve_evidence = "\n".join(nmap_script_lines + nuclei_lines)
+    host["cves_confirmados"] = sorted({
+        cve.upper() for cve in CVE_RE.findall(cve_evidence)
+    })
 
     # Análisis IA
     ai_m = re.search(r"\[ANÁLISIS IA HADES\](.*)", blk, re.DOTALL)
     if ai_m:
-        host["ai"] = ai_m.group(1).split("\n---")[0].strip()
+        host["texto_ia"] = ai_m.group(1).split("\n---")[0].strip()
 
     # Latencia: "Host is up (0.0032s latency)."
     lat_m = re.search(r"Host is up \(([\d.]+)s latency\)", nmap_txt)
@@ -297,7 +310,7 @@ def _assess_risk(host):
         return "INFORMATIVO"
 
     score = 0
-    score += 3 * len(host["cves"])
+    score += 3 * len(host["cves_confirmados"])
     score += 2 * sum(1 for n in host["nuclei"] if CRITICAL_NUCLEI_RE.search(n))
     score += 1 * len(host["nuclei"])
     for p in host["ports"]:
@@ -308,7 +321,7 @@ def _assess_risk(host):
     if OUTDATED_OS_RE.search(host.get("os", "")):
         score += 2
 
-    if host["cves"] or any(CRITICAL_NUCLEI_RE.search(n) for n in host["nuclei"]):
+    if host["cves_confirmados"] or any(CRITICAL_NUCLEI_RE.search(n) for n in host["nuclei"]):
         # Hay CVEs/hallazgos altos confirmados
         return "CRÍTICO" if score >= 8 else "ALTO"
     if score >= 7:
@@ -330,7 +343,7 @@ def map_iso_controls(data):
         controls.setdefault(cid, [title, set()])[1].add(why)
 
     any_open = any(h["ports"] for h in data["hosts"])
-    any_cve = any(h["cves"] or h["nuclei"] for h in data["hosts"])
+    any_cve = any(h["cves_confirmados"] or h["nuclei"] for h in data["hosts"])
     any_cleartext = False
     any_smb = False
     any_mgmt = False
@@ -464,7 +477,7 @@ def _business_impact(host):
     impacts = []
     if (ports & {"445", "139", "135"}) or "microsoft-ds" in svcs or "netbios" in svcs:
         impacts.append("robo o cifrado de información (ransomware) y movimiento lateral")
-    if host["cves"] or any(s in svcs for s in ()) or host["nuclei"]:
+    if host["cves_confirmados"] or any(s in svcs for s in ()) or host["nuclei"]:
         impacts.append("explotación de vulnerabilidades conocidas")
     if (ports & {"23", "21"}) or "telnet" in svcs or "ftp" in svcs:
         impacts.append("interceptación de credenciales por tráfico sin cifrar")
@@ -483,7 +496,7 @@ def _business_impact(host):
 
 def _prob_impact(host):
     """Probabilidad e impacto (0=Bajo,1=Medio,2=Alto) para la matriz de riesgo."""
-    score_p = len(host["cves"]) * 2 + sum(1 for p in host["ports"] if p["port"] in RISKY_PORTS) + len(host["nuclei"])
+    score_p = len(host["cves_confirmados"]) * 2 + sum(1 for p in host["ports"] if p["port"] in RISKY_PORTS) + len(host["nuclei"])
     prob = 2 if score_p >= 3 else (1 if score_p >= 1 else 0)
     r = host["risk"]
     imp = 2 if r in ("CRÍTICO", "ALTO") else (1 if r == "MEDIO" else 0)
@@ -761,8 +774,8 @@ def build_iso27001_docx(data, output_path):
     for h in by_risk:
         sev = SEVERITY.get(h["risk"], "Informativa")
         hallazgo = ", ".join(f"{p['port']}/{p['service']}" for p in h["ports"][:4]) or "Sin servicios expuestos"
-        if h["cves"]:
-            hallazgo += f"; {len(h['cves'])} CVE"
+        if h["cves_confirmados"]:
+            hallazgo += f"; {len(h['cves_confirmados'])} CVE"
         row = ht.add_row().cells
         _set_cell_text(row[0], h["ip"], bold=True, size=10)
         _set_cell_text(row[1], sev, bold=True, white=True, size=10, align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -827,7 +840,7 @@ def build_iso27001_docx(data, output_path):
         irow("Tipo de dispositivo", h.get("device_type"))
         irow("Dirección MAC / fabricante", f"{h['mac']} ({h['vendor']})" if h["mac"] else "N/D")
         irow("Latencia", h.get("latency"))
-        irow("Vulnerabilidades (CVE)", ", ".join(h["cves"]) if h["cves"] else "Ninguna por CVE")
+        irow("Vulnerabilidades (CVE)", ", ".join(h["cves_confirmados"]) if h["cves_confirmados"] else "Ninguna por CVE")
         if h["nuclei"]:
             irow("Hallazgos Nuclei", "\n".join(h["nuclei"]))
         if h.get("traceroute"):
@@ -841,10 +854,10 @@ def build_iso27001_docx(data, output_path):
                 _set_cell_text(row[1], p["proto"], size=9)
                 _set_cell_text(row[2], p["service"], size=9)
                 _set_cell_text(row[3], p["version"] or "—", size=9)
-        if h["ai"]:
+        if h["texto_ia"]:
             ap = doc.add_paragraph(); r = ap.add_run("Análisis Consultivo:")
             r.bold = True; r.font.name = "Times New Roman"; r.font.color.rgb = _rgb(BRANDING["secondary"])
-            bp = _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", h["ai"])[:3000])
+            bp = _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", h["texto_ia"])[:3000])
             bp.alignment = WD_ALIGN_PARAGRAPH.LEFT
         doc.add_paragraph()
 
@@ -887,7 +900,7 @@ def _build_recommendations(data):
                 mgmt = True
         if OUTDATED_OS_RE.search(h.get("os", "")):
             outdated = True
-        if h["cves"] or h["nuclei"]:
+        if h["cves_confirmados"] or h["nuclei"]:
             cves = True
     recs = []
     if cves:

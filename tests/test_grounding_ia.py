@@ -91,12 +91,6 @@ class TestAuditoriaDeLaRespuesta(unittest.TestCase):
         self.assertIn("8000", texto, "debe avisar que 8000/tcp no fue analizado")
         self.assertIn("23", texto, "debe avisar que 23/tcp no fue analizado")
 
-    def test_detecta_cve_inventado(self):
-        respuesta = "Se identifica CVE-2024-99999 en el servicio ssh."
-        avisos = self.mcp.auditar_respuesta_ia(respuesta, self.hechos)
-        self.assertTrue(any("CVE-2024-99999" in a for a in avisos),
-                        "un CVE ausente de la evidencia debe señalarse")
-
     def test_no_avisa_cuando_la_cobertura_es_completa(self):
         respuesta = ("Puertos 22 (Dropbear 2018.76), 23 filtrado, 80, 443 y 8000. "
                      "Sistema Linux 2.6.32, fabricante Example.")

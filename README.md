@@ -1,374 +1,130 @@
-<div align="center">
-
-<img src="assets/logo_hades_sentinel_doc.png" alt="HADES SENTINEL" height="160">
-
 # HADES SENTINEL
+> Agente local de auditoría de red y compliance que transforma escaneos en tiempo real en informes ejecutivos profesionales alineados con la norma ISO/IEC 27001:2022 en un solo clic.
 
-### **From vulnerabilities to ISO 27001 compliance in one click.**
+## Características
+- **Auditoría de Red 100% Local (On-Premise):** Ejecución íntegra en el dispositivo sin envío de datos a servidores externos, telemetría ni dependencias de APIs en la nube. Garantiza la confidencialidad absoluta de la topología de la red.
+- **Mapeo Automatizado a ISO/IEC 27001:2022:** Vincula de forma directa cada vulnerabilidad detectada y hallazgo técnico con los controles del Anexo A de la norma (A.5, A.8, etc.), agilizando el proceso de certificación y compliance.
+- **Pipeline de Escaneo Determinista de 5 Fases:**
+  1. *Descubrimiento de Hosts (Adaptativo):* Barrido de hosts activos mediante Nmap que se ajusta al objetivo: ARP en la propia subred (capa 2, máxima fiabilidad) o sondas de capa 3 acotadas (ICMP echo/timestamp, TCP SYN/ACK y UDP a puertos comunes, con timing limitado) cuando el objetivo está enrutado tras un router.
+  2. *Live Tshark Capture:* Captura de tráfico en tiempo real para análisis de flujos y protocolos.
+  3. *Nuclei Update:* Actualización automática y local de las firmas de vulnerabilidades.
+  4. *Auditoría Profunda:* Escaneo pormenorizado de puertos, banners de servicios, certificados SSL/TLS y CVEs.
+  5. *Consolidación de Informes:* Compilación automática del reporte técnico consolidado e informe ejecutivo.
+- **Generación de Reportes con Marca Blanca (White-Label):** Configuración de plantillas en formato Microsoft Word (`.docx`) altamente personalizables para añadir logotipos de clientes, colores corporativos primarios y secundarios, y pies de página comerciales.
+- **Dashboard Web Interactivo y Seguro:** Panel táctico en puerto `8080` que ofrece consola integrada, un mapa de red en 3D dinámico y monitores de rendimiento para el seguimiento del uso de CPU, GPU y RAM.
+- **Dashboard Local sin Fricción:** El panel se abre directamente, sin pantalla de inicio de sesión. El aislamiento se apoya en que el servidor escucha solo en loopback (`127.0.0.1`) y en una guardia de mismo origen que rechaza peticiones con `Origin`/`Host` ajenos, cerrando los vectores CSRF y de DNS rebinding sin pedir credenciales al usuario.
+- **Análisis por Inteligencia Artificial Consultiva:** Integración opcional con modelos de lenguaje locales a través de Ollama para la generación de análisis consultivos adicionales sin comprometer la privacidad del entorno de red.
+- **Matriz de Riesgos Corporativa:** Cuantificación determinista de la probabilidad e impacto de cada amenaza, representada mediante una tabla visual a nivel ejecutivo.
+- **Cierre y Parada Limpia de Procesos:** Mecanismo integrado para la detención limpia de todos los subprocesos de red y herramientas del sistema en ejecución, impidiendo procesos huérfanos.
 
-🇬🇧 **English** &nbsp;|&nbsp; 🇪🇸 [Español](#-español)
+## Tecnologías
+- **Lenguaje Principal:** Python 3.10+ (gestión del backend, procesamiento de reportes y orquestación).
+- **Descubrimiento y Escaneo:** Nmap (análisis de red, detección de puertos y versiones de sistemas operativos).
+- **Análisis de Tráfico:** Tshark / Wireshark (captura activa de tramas de red local y flujos de paquetes).
+- **Detección de Vulnerabilidades:** Nuclei (ejecutor de pruebas de seguridad y firmas de CVE de ProjectDiscovery).
+- **Auditoría TLS/SSL:** OpenSSL (validación profunda de certificados y suites de cifrado).
+- **Inteligencia Artificial Local:** Ollama (servicio local de inferencia de modelos sin consumo de recursos de internet).
+- **Librerías Python Clave:**
+  - `python-docx` (generación automática y diseño personalizado de archivos Word `.docx`).
+  - `psutil` (monitoreo del sistema local y gestión de procesos del agente).
+- **Frontend del Dashboard:** HTML5, CSS3, JavaScript (incluyendo visualización tridimensional para la cartografía de red local).
 
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#-license)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6?logo=windows)](#)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](#)
-[![ISO 27001](https://img.shields.io/badge/ISO%2FIEC%2027001-mapping%20included-006400)](#)
-[![Stars](https://img.shields.io/github/stars/Lordhades26/HADES_SENTINEL?style=social)](https://github.com/Lordhades26/HADES_SENTINEL/stargazers)
-[![Issues](https://img.shields.io/github/issues/Lordhades26/HADES_SENTINEL)](https://github.com/Lordhades26/HADES_SENTINEL/issues)
+## Modelo de IA local
 
-**The 100% local network audit agent that turns a live LAN scan into a white-labeled, ISO 27001:2022-aligned executive report — for CISOs, compliance teams, and pentesters who can't send data to the cloud.**
+HADES usa por defecto `HADES-SENTINEL-ANALYST:1.0.0`, un wrapper versionado
+sobre `dolphin3:latest` (Llama 3.1 8B, cuantización Q4_K_M). La configuración
+operativa está centralizada en `hades_ai.py`: endpoint
+`http://127.0.0.1:11434/api/generate`, contexto de 8192 tokens, salida máxima
+de 640 tokens, temperatura 0, sin reintentos y timeout de 180 segundos.
 
-**🖥️ The audit in action — what runs on your network (100% on-premise, zero cloud)**
+La IA es exclusivamente consultiva: no ejecuta acciones, no confirma CVE que
+no estén presentes literalmente en la evidencia y no altera hallazgos,
+severidades ni la matriz de riesgo determinista. Todo bloque generado queda
+marcado como no verificado y requiere validación humana.
 
-<table>
-  <tr>
-    <td align="center"><img src="assets/screenshots/01_dashboard_live.png" alt="HADES dashboard with live network map and console" width="320"><br><sub><b>Live network map + console</b><br>9 hosts, 12 external IPs, 4 critical findings detected in real time</sub></td>
-    <td align="center"><img src="assets/screenshots/02_dashboard_resources.png" alt="HADES dashboard control panel with system resources and Ollama AI" width="320"><br><sub><b>Control panel + local AI</b><br>5-phase scan flow, CPU/GPU/RAM monitors, Ollama LLM running on-device</sub></td>
-    <td align="center"><img src="assets/screenshots/03_traffic_capture.png" alt="HADES Tshark live traffic capture output" width="320"><br><sub><b>Live traffic capture</b><br>Tshark sniff with protocol breakdown and per-host activity</sub></td>
-  </tr>
-</table>
+Para reconstruir el modelo:
 
-**📄 What your business receives — board-ready, audit-ready, white-labeled with your brand**
+```powershell
+ollama create HADES-SENTINEL-ANALYST:1.0.0 -f .\Modelfile.hades-sentinel-analyst
+ollama show HADES-SENTINEL-ANALYST:1.0.0
+```
 
-<table>
-  <tr>
-    <td align="center"><img src="assets/screenshots/04_severity_table.png" alt="HADES severity-classified findings table from the ISO 27001 report" width="320"><br><sub><b>Findings by severity</b><br>every asset classified Critical / High / Medium / Low with business impact</sub></td>
-    <td align="center"><img src="assets/screenshots/05_risk_matrix.png" alt="HADES color-coded risk matrix probability vs impact" width="320"><br><sub><b>Color-coded risk matrix</b><br>probability × impact, deterministic scoring, board-ready</sub></td>
-    <td align="center"><img src="assets/screenshots/06_iso27001_mapping.png" alt="HADES ISO 27001 Annex A control mapping table" width="320"><br><sub><b>ISO 27001 Annex A mapping</b><br>findings auto-mapped to controls A.5.x / A.8.x — saves weeks per audit</sub></td>
-  </tr>
-</table>
+Ollama debe escuchar únicamente en `127.0.0.1:11434`. No se requiere una API
+key para el servicio local y el dashboard no accede directamente a Ollama
+desde el navegador. Las variables `HADES_MODEL`, `HADES_OLLAMA_URL` y
+`HADES_AI_TIMEOUT` permiten ajustes operativos explícitos.
 
-### ⭐ Star this repo if it saved you a compliance audit.
+### Recuperación conservadora de Ollama
 
-</div>
+`hades_ollama_runtime.py` comprueba el servicio local al iniciar el dashboard y
+antes del primer uso de IA en modo CLI. Si la API ya responde, no reinicia ni
+duplica el proceso. Si el puerto está libre y encuentra un `ollama.exe` local
+verificable, puede iniciar `ollama serve` oculto con un entorno saneado.
 
----
+El runtime nunca mata procesos preexistentes, solicita elevación, modifica
+Windows Firewall ni ejecuta rutas recibidas desde el dashboard. Si el puerto
+está ocupado por un listener que no responde, informa
+`blocked_stale_listener` y HADES continúa sin IA.
 
-## 🎯 Why HADES?
+Estados de diagnóstico:
 
-- 🧾 **Compliance teams waste weeks** manually mapping technical findings to ISO 27001 Annex A controls. SENTINEL produces the mapping automatically, in one `.docx`.
-- 🛠️ **Pentest tools don't speak ISO.** Nmap, Nuclei and friends emit raw evidence. SENTINEL orchestrates them and translates the output into the language an auditor signs off on.
-- 🔒 **Cloud scanners leak your network topology** to third-party SaaS. SENTINEL runs 100% on-prem: zero data egress, no API keys, no telemetry. Built for environments where uploading scan data is illegal or fireable.
+- `healthy`: servicio ya disponible;
+- `started`: servicio iniciado de forma segura por HADES;
+- `disabled`: IA deshabilitada mediante `HADES_SKIP_AI=1`;
+- `missing_binary`: no se encontró un binario local verificable;
+- `blocked_stale_listener`: puerto ocupado por un servicio no saludable;
+- `startup_failed`: el proceso propio no inició correctamente;
+- `unsupported_endpoint`: endpoint distinto del loopback local permitido.
 
----
+Ninguno de estos estados cambia evidencia, severidad, riesgo ni el código de
+salida de la auditoría determinista.
 
-## 📦 What you get
-
-Every audit produces a timestamped folder containing:
-
-1. **Executive Report** — `INFORME_EJECUTIVO_ISO27001.docx` aligned to ISO/IEC 27001:2022, white-labeled with your brand.
-2. **Technical Consolidated Report** — `INFORME_MAESTRO.md` with full evidence, host-by-host.
-3. **Risk Matrix** — color-coded (critical / high / medium / low) with deterministic scoring.
-4. **Traffic Capture** — `trafico_red.txt` with flows, ports, protocols and external endpoints contacted.
-5. **ISO 27001 Annex A Control Mapping** — each finding tied to its corresponding control (A.5–A.8).
-6. **Per-Host Detail Reports** — `host_XXX_XXX_XXX_XXX.txt` with ports, banners, TLS audit and CVE matches.
-
----
-
-## 🚀 Quick start
-
+## Estructura del Proyecto
 ```bash
-# 1. Clone
-git clone https://github.com/Lordhades26/HADES_SENTINEL.git
-cd HADES_SENTINEL
-
-# 2. Install Python deps
-pip install python-docx psutil
-
-# 3. Install external tools (one-liner via winget)
-winget install Insecure.Nmap WiresharkFoundation.Wireshark ShiningLight.OpenSSL.Light Ollama.Ollama
-# Nuclei: download from https://github.com/projectdiscovery/nuclei/releases
-#         → extract to %USERPROFILE%\Documents\HADES\nuclei\nuclei.exe
-#         → run: nuclei -update-templates
-
-# 4. Launch the tactical dashboard
-LANZAR_DASHBOARD.bat
-
-# 5. Open http://127.0.0.1:8080 — the session token is injected automatically.
+HADES_SENTINEL/
+├── .github/                       # Plantillas de GitHub y archivos de configuración comunitaria
+│   ├── ISSUE_TEMPLATE/            # Plantillas estandarizadas para reporte de errores y nuevas características
+│   │   ├── bug_report.yml
+│   │   ├── config.yml
+│   │   └── feature_request.yml
+│   ├── FUNDING.yml                # Canales y enlaces de financiación del proyecto
+│   └── PULL_REQUEST_TEMPLATE.md   # Plantilla estándar para propuestas de código
+├── assets/                        # Recursos visuales del proyecto y documentación
+│   ├── logo_hades_sentinel_doc.png # Logotipo adaptado para documentos oficiales
+│   ├── logo_hades_sentinel.png     # Logotipo oficial del proyecto para la interfaz
+│   └── screenshots/               # Capturas de pantalla del dashboard y reportes en acción
+│       ├── 01_dashboard_live.png
+│       ├── 02_dashboard_resources.png
+│       ├── 03_traffic_capture.png
+│       ├── 04_severity_table.png
+│       ├── 05_risk_matrix.png
+│       └── 06_iso27001_mapping.png
+├── vendor/                        # Librerías de terceros locales empaquetadas sin conexión externa
+│   └── hades-graph-bundle.js      # Biblioteca para renderizado de gráficos tridimensionales
+├── .gitignore                     # Archivo de exclusiones de Git (evita subir credenciales e informes de escaneo)
+├── agente HADES.html              # Archivo de inicio del agente interactivo local
+├── build_pendrive.sh              # Script Bash para empaquetar el ecosistema de forma portable en un USB
+├── CONTRIBUTING.md                # Directrices de contribución técnica al repositorio
+├── DETENER_HADES.bat              # Script Batch de Windows para detención forzosa y limpia de procesos activos
+├── FLUJO_DE_ESCANEO.md            # Documentación detallada del flujo y ciclo de vida del escaneo
+├── hades_local.py                 # Módulo de interfaz local CLI para la ejecución rápida
+├── hades_ai.py                    # Contrato central del modelo IA consultivo y entorno seguro
+├── hades_mcp.py                   # Conector y adaptador Model Context Protocol (MCP) para agentes de IA
+├── hades_report_docx.py           # Generador automático del reporte ejecutivo ISO/IEC 27001 en formato Word
+├── hades_server.py                # Servidor backend multi-hilo para el dashboard con protección CSRF
+├── hades_surveillance_advanced.py # Coordinador del motor del pipeline de escaneo de 5 fases
+├── hades_win_master_advanced.py   # Controlador de llamadas de sistema a binarios externos locales (Nmap, etc.)
+├── install_tools.sh               # Script Bash para instalar las herramientas y binarios base requeridos
+├── LANZAR_DASHBOARD.bat           # Script Batch de Windows para iniciar el servidor web y lanzar el navegador
+├── LANZAR_HADES.bat               # Script Batch de Windows para ejecutar la auditoría de red mediante terminal
+├── LICENSE                        # Licencia del proyecto (MIT)
+├── LICENSE-APACHE                 # Licencia alternativa Apache 2.0
+├── LICENSE-MIT                    # Archivo de licencia MIT secundaria
+├── MANUAL_USUARIO.md              # Guía completa de instalación, despliegue y manual operativo del usuario
+├── Modelfile.hades-sentinel-analyst # Modelo local versionado sobre Dolphin 3 Q4_K_M
+├── network_map_3d.js              # Controlador en JavaScript para el mapa interactivo tridimensional
+├── README.md                      # Documentación general y técnica principal del proyecto
+├── requirements.txt               # Dependencias Python necesarias para el funcionamiento del agente
+├── SECURITY.md                    # Política de seguridad y reporte seguro de incidentes
+└── uninstall.sh                   # Script Bash para remover la instalación y binarios locales
 ```
-
-Prefer headless? Run `LANZAR_HADES.bat` for a full pipeline audit in console mode.
-
----
-
-## 🧠 How it works
-
-A deterministic 5-phase pipeline. The AI layer (local Ollama) is **consultative-only** — risk scoring stays evidence-based.
-
-```
-[FASE 1: ARP Sweep] ────> Discover active hosts on the LAN (Nmap)
-         │
-[FASE 2: Live Tshark] ──> Capture live traffic (30s default)
-         │
-[FASE 3: Nuclei Update] > Pull latest CVE / misconfig templates
-         │
-  [TACTICAL MENU] <────> Pentester picks scope (single host or full subnet)
-         │
-         ├──> [Host ID] ──> FASE 4: Deep audit of one host
-         │                  FASE 5: Per-host report
-         │
-         └──> [Option A] ─> FASE 4: Mass deep audit across the subnet
-                            FASE 5: Consolidated INFORME_MAESTRO.md + ISO .docx
-```
-
-**Phase 4 per host runs:** deep Nmap (ports, services, OS) → Nuclei (web vulns) → OpenSSL (TLS audit) → Ollama (consultative analysis only).
-
----
-
-## 🎨 Customize your brand (white-label compliance)
-
-Open `hades_report_docx.py` and edit the `BRANDING` dict at the top:
-
-```python
-BRANDING = {
-    "company_name": "YOUR COMPANY",
-    "logo_path":    "assets/your_logo.png",   # leave empty to skip
-    "primary":      (0x12, 0x22, 0x33),       # corporate hex → RGB tuple
-    "accent":       (0xC0, 0x39, 0x2B),
-    "footer_text":  "CONFIDENTIAL — for internal use only",
-}
-```
-
-Every `.docx` report now ships with your customer's logo, colors and footer. Resell the audit under your own brand.
-
----
-
-## 🏗️ Architecture
-
-| File | Role |
-|------|------|
-| `hades_server.py` | Dashboard backend (port 8080, CSRF-protected, multi-thread). |
-| `hades_surveillance_advanced.py` | Pipeline orchestrator (5 phases). |
-| `hades_win_master_advanced.py` | Tool engine — Nmap, Nuclei, Tshark, OpenSSL, Ollama. |
-| `hades_report_docx.py` | ISO 27001:2022 `.docx` report generator. |
-| `LANZAR_DASHBOARD.bat` | One-click dashboard launcher. |
-| `LANZAR_HADES.bat` | One-click console audit. |
-| `DETENER_HADES.bat` | Emergency stop (kills all agent processes cleanly). |
-
-External binaries are resolved from `WIN_PATHS` in `hades_win_master_advanced.py` — edit it if you installed Nmap/Tshark/OpenSSL/Nuclei in a non-standard path.
-
----
-
-## 🔐 Security & Privacy
-
-- **100% local execution.** No cloud calls, no API keys, no telemetry. Verify with Tshark — the agent does not phone home.
-- **CSRF-protected dashboard.** Single-use session token injected into the browser at launch; no external client can hit the API.
-- **WebAuthn biometric auth** (Windows Hello) for dashboard access.
-- **AI is consultative, never decisive.** Ollama runs locally on `127.0.0.1:11434`. Risk scoring is deterministic and traceable to evidence.
-- **`.gitignore` excludes `informes/`** — scan results (IPs, MACs, banners, TLS data) never leak into version control.
-- **Clean shutdown** kills every spawned binary (`nmap.exe`, `tshark.exe`, `nuclei.exe`, `openssl.exe`, `python*.exe`) — no orphan processes.
-
----
-
-## ⚖️ Legal notice
-
-For **authorized security audits only**. Use exclusively on networks and systems you own or have explicit written permission to test. Unauthorized scanning may be illegal in your jurisdiction (e.g. Chile Law 21.459, EU Budapest Convention, US CFAA). The authors accept no liability for misuse. **You are solely responsible for how you use this tool.**
-
----
-
-## 📜 License
-
-Dual-licensed under **MIT OR Apache-2.0**. Pick whichever fits your project. See [`LICENSE`](LICENSE) and [`LICENSE-APACHE`](LICENSE-APACHE).
-
----
-
-## 🤝 Contributing
-
-PRs, issues and feature requests are welcome. Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and use the templates in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) before opening an issue.
-
-Using HADES in your organization? [Open an issue](https://github.com/Lordhades26/HADES_SENTINEL/issues/new) and tell us — we'll feature your use case (with permission).
-
----
-
-<div align="center">
-
-### ⭐ Found this useful? **[Star the repo](https://github.com/Lordhades26/HADES_SENTINEL/stargazers)** — it's the single biggest signal that keeps this project alive.
-
-</div>
-
----
----
-
-# 🇪🇸 Español
-
-<div align="center">
-
-<img src="assets/logo_hades_sentinel_doc.png" alt="HADES SENTINEL" height="160">
-
-# HADES SENTINEL
-
-### **De vulnerabilidades a compliance ISO 27001 en un click.**
-
-[![Licencia: MIT OR Apache-2.0](https://img.shields.io/badge/licencia-MIT%20OR%20Apache--2.0-blue.svg)](#-licencia)
-[![Plataforma](https://img.shields.io/badge/plataforma-Windows%2010%20%7C%2011-0078D6?logo=windows)](#)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](#)
-[![ISO 27001](https://img.shields.io/badge/ISO%2FIEC%2027001-mapeo%20incluido-006400)](#)
-
-**El agente local de auditoría de red que convierte un escaneo LAN en vivo en un informe ejecutivo `.docx` con tu marca, alineado a ISO 27001:2022 — para CISOs, equipos de compliance y pentesters que no pueden enviar datos a la nube.**
-
-**🖥️ La auditoría en acción — lo que corre en tu red (100 % on-premise, cero nube)**
-
-<table>
-  <tr>
-    <td align="center"><img src="assets/screenshots/01_dashboard_live.png" alt="Dashboard HADES con mapa de red en vivo y consola" width="320"><br><sub><b>Mapa de red + consola en vivo</b><br>9 hosts, 12 IPs externas, 4 hallazgos críticos detectados en tiempo real</sub></td>
-    <td align="center"><img src="assets/screenshots/02_dashboard_resources.png" alt="Panel de control HADES con recursos del sistema y Ollama IA" width="320"><br><sub><b>Panel de control + IA local</b><br>flujo de 5 fases, monitores CPU/GPU/RAM, Ollama LLM en el dispositivo</sub></td>
-    <td align="center"><img src="assets/screenshots/03_traffic_capture.png" alt="Captura de tráfico Tshark en vivo de HADES" width="320"><br><sub><b>Captura de tráfico en vivo</b><br>sniffing Tshark con desglose por protocolo y actividad por host</sub></td>
-  </tr>
-</table>
-
-**📄 Lo que tu negocio recibe — listo para directorio, listo para auditoría, con tu marca**
-
-<table>
-  <tr>
-    <td align="center"><img src="assets/screenshots/04_severity_table.png" alt="Tabla de hallazgos clasificados por severidad de HADES" width="320"><br><sub><b>Hallazgos por severidad</b><br>cada activo clasificado Crítico / Alto / Medio / Bajo con impacto al negocio</sub></td>
-    <td align="center"><img src="assets/screenshots/05_risk_matrix.png" alt="Matriz de riesgo color-coded probabilidad vs impacto de HADES" width="320"><br><sub><b>Matriz de riesgo coloreada</b><br>probabilidad × impacto, scoring determinista, lista para directorio</sub></td>
-    <td align="center"><img src="assets/screenshots/06_iso27001_mapping.png" alt="Tabla de mapeo a controles ISO 27001 Anexo A de HADES" width="320"><br><sub><b>Mapeo a ISO 27001 Anexo A</b><br>hallazgos auto-mapeados a controles A.5.x / A.8.x — ahorra semanas por auditoría</sub></td>
-  </tr>
-</table>
-
-### ⭐ Dale star si te ahorró una auditoría de compliance.
-
-</div>
-
----
-
-## 🎯 ¿Por qué HADES?
-
-- 🧾 **Los equipos de compliance pierden semanas** mapeando hallazgos técnicos a los controles del Anexo A de ISO 27001. SENTINEL genera el mapeo automáticamente en un único `.docx`.
-- 🛠️ **Las herramientas de pentest no hablan ISO.** Nmap, Nuclei y compañía emiten evidencia cruda. SENTINEL las orquesta y traduce la salida al idioma que firma un auditor.
-- 🔒 **Los escáneres en la nube filtran la topología de tu red** a SaaS de terceros. SENTINEL corre 100 % on-premise: cero egreso de datos, sin API keys, sin telemetría. Pensado para entornos donde subir datos de escaneo es ilegal o despido directo.
-
----
-
-## 📦 Lo que obtienes
-
-Cada auditoría crea una carpeta con marca temporal que contiene:
-
-1. **Informe Ejecutivo** — `INFORME_EJECUTIVO_ISO27001.docx` alineado a ISO/IEC 27001:2022, con tu marca.
-2. **Informe Técnico Consolidado** — `INFORME_MAESTRO.md` con evidencia completa, host por host.
-3. **Matriz de Riesgo** — coloreada (crítico / alto / medio / bajo) con scoring determinista.
-4. **Captura de Tráfico** — `trafico_red.txt` con flujos, puertos, protocolos y endpoints externos contactados.
-5. **Mapeo a Controles del Anexo A de ISO 27001** — cada hallazgo ligado a su control correspondiente (A.5–A.8).
-6. **Reportes de Detalle por Host** — `host_XXX_XXX_XXX_XXX.txt` con puertos, banners, auditoría TLS y CVE detectadas.
-
----
-
-## 🚀 Inicio rápido
-
-```bash
-# 1. Clonar
-git clone https://github.com/Lordhades26/HADES_SENTINEL.git
-cd HADES_SENTINEL
-
-# 2. Instalar dependencias Python
-pip install python-docx psutil
-
-# 3. Instalar herramientas externas (one-liner con winget)
-winget install Insecure.Nmap WiresharkFoundation.Wireshark ShiningLight.OpenSSL.Light Ollama.Ollama
-# Nuclei: descarga desde https://github.com/projectdiscovery/nuclei/releases
-#         → extrae a %USERPROFILE%\Documents\HADES\nuclei\nuclei.exe
-#         → ejecuta: nuclei -update-templates
-
-# 4. Lanzar el dashboard táctico
-LANZAR_DASHBOARD.bat
-
-# 5. Abre http://127.0.0.1:8080 — el token de sesión se inyecta solo.
-```
-
-¿Prefieres modo headless? Ejecuta `LANZAR_HADES.bat` para una auditoría completa en consola.
-
----
-
-## 🧠 Cómo funciona
-
-Pipeline determinista de 5 fases. La capa de IA (Ollama local) es **consultiva, nunca decisoria** — el scoring de riesgo se mantiene basado en evidencia.
-
-```
-[FASE 1: ARP Sweep] ────> Descubre hosts activos en la LAN (Nmap)
-         │
-[FASE 2: Live Tshark] ──> Captura tráfico en vivo (30s por defecto)
-         │
-[FASE 3: Nuclei Update] > Descarga últimas plantillas CVE/misconfig
-         │
-  [MENU TACTICO] <─────> El pentester elige el alcance (host único o subred)
-         │
-         ├──> [ID Host] ──> FASE 4: Auditoría profunda de un host
-         │                  FASE 5: Reporte por host
-         │
-         └──> [Opción A] ─> FASE 4: Auditoría masiva de la subred
-                            FASE 5: INFORME_MAESTRO.md + .docx ISO consolidados
-```
-
-**La Fase 4 por host ejecuta:** Nmap profundo (puertos, servicios, SO) → Nuclei (vulns web) → OpenSSL (auditoría TLS) → Ollama (análisis consultivo).
-
----
-
-## 🎨 Personaliza tu marca (compliance white-label)
-
-Abre `hades_report_docx.py` y edita el dict `BRANDING` al inicio:
-
-```python
-BRANDING = {
-    "company_name": "TU EMPRESA",
-    "logo_path":    "assets/tu_logo.png",     # vacío = se omite
-    "primary":      (0x12, 0x22, 0x33),       # hex corporativo → RGB
-    "accent":       (0xC0, 0x39, 0x2B),
-    "footer_text":  "CONFIDENCIAL — uso interno",
-}
-```
-
-Cada informe `.docx` lleva el logo, colores y pie de página de tu cliente. Revende la auditoría bajo tu propia marca.
-
----
-
-## 🏗️ Arquitectura
-
-| Archivo | Rol |
-|---------|-----|
-| `hades_server.py` | Backend del dashboard (puerto 8080, CSRF, multihilo). |
-| `hades_surveillance_advanced.py` | Orquestador del pipeline (5 fases). |
-| `hades_win_master_advanced.py` | Motor de herramientas — Nmap, Nuclei, Tshark, OpenSSL, Ollama. |
-| `hades_report_docx.py` | Generador del informe ISO 27001:2022 `.docx`. |
-| `LANZAR_DASHBOARD.bat` | Lanzador del dashboard en un click. |
-| `LANZAR_HADES.bat` | Auditoría por consola en un click. |
-| `DETENER_HADES.bat` | Parada de emergencia (cierre limpio de procesos). |
-
-Los binarios externos se resuelven desde `WIN_PATHS` en `hades_win_master_advanced.py` — edítalo si instalaste Nmap/Tshark/OpenSSL/Nuclei en rutas no estándar.
-
----
-
-## 🔐 Seguridad y Privacidad
-
-- **Ejecución 100 % local.** Sin llamadas a la nube, sin API keys, sin telemetría. Verifícalo con Tshark — el agente no telefonea a casa.
-- **Dashboard protegido con CSRF.** Token de sesión de un solo uso inyectado en el navegador al arrancar; ningún cliente externo puede invocar la API.
-- **Autenticación biométrica WebAuthn** (Windows Hello) para acceso al dashboard.
-- **La IA es consultiva, nunca decisoria.** Ollama corre localmente en `127.0.0.1:11434`. El scoring de riesgo es determinista y trazable a evidencia.
-- **`.gitignore` excluye `informes/`** — los resultados (IPs, MACs, banners, datos TLS) nunca acaban en el control de versiones.
-- **Cierre limpio** mata cada binario lanzado (`nmap.exe`, `tshark.exe`, `nuclei.exe`, `openssl.exe`, `python*.exe`) — sin procesos huérfanos.
-
----
-
-## ⚖️ Aviso legal
-
-Solo para **auditorías de seguridad autorizadas**. Úsala exclusivamente en redes y sistemas de tu propiedad o sobre los que tengas permiso explícito por escrito. El escaneo no autorizado puede ser ilegal en tu jurisdicción (p. ej. Chile Ley 21.459, Convenio de Budapest a nivel internacional, CFAA en EE. UU.). Los autores no se hacen responsables del mal uso. **Tú eres el único responsable del uso que le des.**
-
----
-
-## 📜 Licencia
-
-Licencia dual **MIT OR Apache-2.0**. Elige la que mejor encaje con tu proyecto. Ver [`LICENSE`](LICENSE) y [`LICENSE-APACHE`](LICENSE-APACHE).
-
----
-
-## 🤝 Contribuir
-
-PRs, issues y solicitudes de features son bienvenidas. Lee [`CONTRIBUTING.md`](CONTRIBUTING.md) y usa las plantillas en [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/) antes de abrir un issue.
-
-¿Usas HADES en tu organización? [Abre un issue](https://github.com/Lordhades26/HADES_SENTINEL/issues/new) y cuéntanoslo — destacaremos tu caso de uso (con tu permiso).
-
----
-
-<div align="center">
-
-### ⭐ ¿Te resultó útil? **[Dale star al repo](https://github.com/Lordhades26/HADES_SENTINEL/stargazers)** — es la señal más fuerte que mantiene vivo este proyecto.
-
-</div>

@@ -175,11 +175,9 @@ class HadesGraph3D {
     // ── Carga de datos reales desde /api/graph ──────────────────────────────
     async refresh() {
         try {
-            // Preferir el token inyectado por el servidor (siempre correcto) y, si no,
-            // el de la URL. Evita 403 si la pestaña tiene una URL con token antiguo.
-            const token = (typeof REAL_SURVEILLANCE_TOKEN !== "undefined" && REAL_SURVEILLANCE_TOKEN)
-                || new URLSearchParams(window.location.search).get("token") || "";
-            const res = await fetch(`/api/graph?token=${token}`);
+            // Sin token: el backend autoriza por mismo origen (esta pagina en
+            // 127.0.0.1:8080). El fetch va tal cual, sin credenciales.
+            const res = await fetch(`/api/graph`);
             if (!res.ok) return;
             const data = await res.json();
             this._apply(data);

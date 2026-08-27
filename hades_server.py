@@ -2,12 +2,17 @@
 """
 HADES SECURE DASHBOARD SERVER
 
-Servidor local del agente HADES SENTINEL. Sirve el dashboard tactico, expone
-APIs internas para lanzar/detener escaneos y autoriza el acceso mediante
-WebAuthn (Windows Hello) — ver hades_auth.py para el flujo biometrico.
+Servidor local del agente HADES SENTINEL. Sirve el dashboard tactico y expone
+las APIs internas para lanzar/detener escaneos.
 
-Diseno: solo loopback (127.0.0.1:8080). Cero exposicion de red. Todas las
-APIs no-auth estan detras de una sesion valida (cookie HADES_SID).
+Diseno: solo loopback (127.0.0.1:8080). Cero exposicion de red. El dashboard
+NO pide inicio de sesion: quien tiene la maquina, tiene el agente.
+
+Eso NO significa que las APIs esten abiertas. Sin sesion de por medio, una web
+cualquiera que el usuario visite podria pedirle al navegador que dispare un
+escaneo contra http://127.0.0.1:8080 (CSRF), o llegar al puerto por DNS
+rebinding. La guardia _request_allowed() cierra ambas puertas exigiendo que la
+peticion venga del propio dashboard, sin pedirle nada al usuario.
 """
 import os
 import sys
@@ -19,10 +24,12 @@ import subprocess
 import webbrowser
 import threading
 import urllib.request
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, unquote
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
-
-import hades_auth as auth
+from hades_ai import safe_subprocess_env
+from hades_ollama_runtime import ensure_ollama_available
+from hades_validation import validate_target
+from hades_processes import terminate_process_tree
 
 # Asegurar codificación UTF-8 en Windows para evitar UnicodeEncodeError al imprimir caracteres
 if sys.platform.startswith('win') or os.name == 'nt':
@@ -34,6 +41,33 @@ if sys.platform.startswith('win') or os.name == 'nt':
 
 PORT = 8080
 _HERE = os.path.dirname(os.path.abspath(__file__))
+MAX_POST_BODY_BYTES = 8 * 1024
+
+# Unicos Host/Origin admitidos. El servidor solo escucha en loopback, pero el
+# header Host lo elige el cliente: un dominio del atacante que resuelva a
+# 127.0.0.1 (DNS rebinding) llegaria con Host = evil.com. Y el Origin delata a
+# cualquier pagina de terceros que intente conducir el agente desde el navegador.
+ALLOWED_HOSTS = frozenset({
+    f"localhost:{PORT}", f"127.0.0.1:{PORT}", f"[::1]:{PORT}",
+})
+ALLOWED_ORIGINS = frozenset({
+    f"http://localhost:{PORT}", f"http://127.0.0.1:{PORT}", f"http://[::1]:{PORT}",
+})
+
+# El dashboard sólo necesita estos archivos. No existe un webroot genérico: una
+# ruta no listada se trata como inexistente aunque el archivo esté en el repo.
+STATIC_ASSETS = {
+    "/": ("agente HADES.html", "text/html; charset=utf-8"),
+    "/index.html": ("agente HADES.html", "text/html; charset=utf-8"),
+    "/agente HADES.html": ("agente HADES.html", "text/html; charset=utf-8"),
+    "/assets/logo_hades_sentinel_doc.png": (
+        "assets/logo_hades_sentinel_doc.png", "image/png"
+    ),
+    "/network_map_3d.js": ("network_map_3d.js", "text/javascript; charset=utf-8"),
+    "/vendor/hades-graph-bundle.js": (
+        "vendor/hades-graph-bundle.js", "text/javascript; charset=utf-8"
+    ),
+}
 
 # Variables de estado del agente
 active_process = None
@@ -42,51 +76,28 @@ log_buffer = []
 # ---------------------------------------------------------------------------
 # Cleanup total al detener el agente. Regla: cuando el server se cierra (Ctrl+C,
 # Ctrl+Break, cierre de ventana CMD/PowerShell, SIGTERM, atexit), NO debe quedar
-# NADA corriendo — ni el subprocess de escaneo, ni herramientas hijas, ni token
-# de sesión en disco. Implementación scopada: NUNCA mata python.exe global.
+# NADA corriendo — ni el subprocess de escaneo ni sus herramientas hijas.
+# Implementación acotada al árbol PID propio: NUNCA mata procesos globales.
 # ---------------------------------------------------------------------------
-HADES_CHILD_TOOLS = (
-    "nmap.exe", "tshark.exe", "nuclei.exe", "masscan.exe",
-    "gobuster.exe", "nikto.exe", "wpscan.exe", "httpx.exe",
-    "feroxbuster.exe", "openssl.exe", "sslscan.exe", "testssl.exe",
-)
 _cleanup_lock = threading.Lock()
+_scan_lock = threading.Lock()
 _cleanup_done = False
 
 def _kill_active_tree():
     global active_process
-    if active_process is None:
-        return
+    with _scan_lock:
+        process = active_process
+    if process is None:
+        return True
+    stopped = terminate_process_tree(process, timeout=5)
     try:
-        pid = active_process.pid
-    except Exception:
-        active_process = None
-        return
-    try:
-        subprocess.run(
-            f"taskkill /f /t /pid {pid}",
-            shell=True, capture_output=True, text=True, timeout=5
-        )
-    except Exception:
-        try:
-            active_process.kill()
-        except Exception:
-            pass
-    try:
-        active_process.stdout.close()
+        process.stdout.close()
     except Exception:
         pass
-    active_process = None
-
-def _kill_child_tools():
-    try:
-        args = " ".join(f"/im {t}" for t in HADES_CHILD_TOOLS)
-        subprocess.run(
-            f"taskkill /f {args}",
-            shell=True, capture_output=True, timeout=5
-        )
-    except Exception:
-        pass
+    with _scan_lock:
+        if active_process is process and process.poll() is not None:
+            active_process = None
+    return stopped
 
 def _unload_ollama_models():
     """Descarga TODOS los modelos cargados en Ollama (keep_alive=0). La API
@@ -132,7 +143,6 @@ def _emergency_cleanup(reason="exit"):
     except Exception:
         pass
     _kill_active_tree()
-    _kill_child_tools()
 
 def _signal_handler(signum, _frame):
     _emergency_cleanup(f"signal {signum}")
@@ -217,7 +227,17 @@ ollama_metrics = {
     "total_duration_ms": 0,
     "last_metric_age_seconds": None,
     "error": None,
+    "runtime_state": "not_checked",
+    "runtime_detail": "Runtime de Ollama aún no evaluado.",
 }
+
+
+def _initialize_ollama_runtime(ensure_runtime=ensure_ollama_available):
+    """Evalúa Ollama una vez sin convertir su disponibilidad en requisito."""
+    status = ensure_runtime()
+    ollama_metrics["runtime_state"] = status.state
+    ollama_metrics["runtime_detail"] = status.detail
+    return status
 
 def _http_get_json(url, timeout=2.5):
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
@@ -244,6 +264,12 @@ def monitor_ollama():
             "total_duration_ms": 0,
             "last_metric_age_seconds": None,
             "error": None,
+            "runtime_state": ollama_metrics.get(
+                "runtime_state", "not_checked"
+            ),
+            "runtime_detail": ollama_metrics.get(
+                "runtime_detail", "Runtime de Ollama aún no evaluado."
+            ),
         }
         try:
             ver = _http_get_json(f"{OLLAMA_HOST}/api/version", timeout=2.0)
@@ -354,9 +380,17 @@ def monitor_system_resources():
         loop += 1
         time.sleep(2)
 
-# Iniciar hilo de monitoreo en segundo plano
-threading.Thread(target=monitor_system_resources, daemon=True).start()
-threading.Thread(target=monitor_ollama, daemon=True).start()
+_background_monitors_started = False
+
+
+def _start_background_monitors(thread_factory=threading.Thread):
+    """Inicia monitores una sola vez y únicamente durante el arranque real."""
+    global _background_monitors_started
+    if _background_monitors_started:
+        return
+    _background_monitors_started = True
+    for target in (monitor_system_resources, monitor_ollama):
+        thread_factory(target=target, daemon=True).start()
 
 def add_log(msg):
     log_buffer.append(msg)
@@ -486,6 +520,52 @@ def build_graph_data():
     return result
 
 
+def _resolve_static_asset(request_path):
+    """Resuelve una ruta pública exacta sin atravesar symlinks ni el webroot.
+
+    Devuelve ``(ruta_absoluta, content_type)`` sólo para archivos de
+    ``STATIC_ASSETS`` que existan como archivos regulares dentro de ``_HERE``.
+    """
+    try:
+        public_path = unquote(request_path)
+    except (TypeError, ValueError):
+        return None
+    if "\x00" in public_path:
+        return None
+    entry = STATIC_ASSETS.get(public_path)
+    if entry is None:
+        return None
+
+    relative_path, content_type = entry
+    candidate = os.path.abspath(os.path.join(_HERE, relative_path))
+    try:
+        if os.path.commonpath((_HERE, candidate)) != _HERE:
+            return None
+    except ValueError:
+        return None
+
+    # ``realpath`` por sí solo seguiría el enlace. Se rechaza cualquier enlace
+    # en la cadena completa, incluido el propio asset.
+    cursor = _HERE
+    for component in relative_path.replace("\\", "/").split("/"):
+        cursor = os.path.join(cursor, component)
+        if os.path.islink(cursor):
+            return None
+    if os.path.realpath(candidate) != candidate or not os.path.isfile(candidate):
+        return None
+    return candidate, content_type
+
+
+def _launch_scan_process(arguments, **kwargs):
+    """Punto único de creación del agente, inyectable en pruebas."""
+    return subprocess.Popen(arguments, **kwargs)
+
+
+def _build_scan_env(source=None):
+    """Entorno mínimo del escaneo; nunca hereda tokens ni API keys."""
+    return safe_subprocess_env(source)
+
+
 class SecureHadesHandler(SimpleHTTPRequestHandler):
     # HTTP/1.1 con keep-alive: el navegador reutiliza unas pocas conexiones en lugar
     # de abrir cientos de conexiones cortas (una por cada poll), que saturaban el
@@ -505,9 +585,11 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         # CORS: sin Access-Control-Allow-Origin = same-origin only. El dashboard
         # vive en el mismo origen (loopback :8080), no necesita CORS abierto.
-        # Antes era "*", que dejaba que cualquier pagina web del navegador
-        # leyera /api/auth/status y descubriera si hay credentials registradas.
+        # Abrirlo a "*" dejaria que cualquier web del navegador leyera las
+        # respuestas de las APIs del agente.
         self.end_headers()
+        if self.command == "HEAD":
+            return
         try:
             self.wfile.write(body)
         except Exception:
@@ -520,6 +602,8 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        if self.command == "HEAD":
+            return
         try:
             self.wfile.write(body)
         except Exception:
@@ -535,90 +619,74 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         super().end_headers()
 
-    def _get_cookie_sid(self):
-        """Extrae el HADES_SID del header Cookie. None si no presente."""
-        raw = self.headers.get('Cookie', '')
-        for part in raw.split(';'):
-            part = part.strip()
-            if part.startswith('HADES_SID='):
-                return part[len('HADES_SID='):]
-        return None
+    def _request_allowed(self):
+        """Guardia de mismo origen. Sustituye al login WebAuthn: no le pide nada
+        al usuario, solo comprueba que la peticion nace del propio dashboard.
 
-    def _set_session_cookie(self, sid):
-        """Header Set-Cookie para emitir sesion tras login/registro exitoso.
-        HttpOnly: invisible a JS (bloquea XSS robando sid).
-        SameSite=Strict: bloquea CSRF cross-site.
-        Sin Secure: estamos en http://127.0.0.1 (loopback); Secure rompe en http."""
-        self.send_header(
-            "Set-Cookie",
-            f"HADES_SID={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={auth.SESSION_TTL_SECONDS}"
-        )
+        - Host debe ser loopback: corta el DNS rebinding, donde evil.com resuelve
+          a 127.0.0.1 y el navegador entrega el puerto al atacante.
+        - Origin, si viene, debe ser el dashboard: corta el CSRF. Los navegadores
+          mandan Origin en todo POST (fetch, XHR y formularios), asi que una web
+          de terceros se delata sola.
+        - Origin ausente = navegacion directa o herramienta local (curl, scripts
+          del propio usuario). Se permite: ya esta dentro de la maquina."""
+        if self.headers.get("Host", "") not in ALLOWED_HOSTS:
+            return False
+        origin = self.headers.get("Origin")
+        return origin is None or origin in ALLOWED_ORIGINS
 
-    def _clear_session_cookie(self):
-        self.send_header(
-            "Set-Cookie",
-            "HADES_SID=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
-        )
+    def _serve_static_asset(self, path):
+        resolved = _resolve_static_asset(path)
+        if resolved is None:
+            self.send_error(404, "Not Found")
+            return
+        asset_path, content_type = resolved
+        try:
+            with open(asset_path, "rb") as asset:
+                body = asset.read()
+        except (OSError, ValueError):
+            self.send_error(404, "Not Found")
+            return
+        self._send_bytes(body, content_type)
 
-    def check_token(self):
-        """Autorizacion: cookie HADES_SID emitida tras WebAuthn login/registro.
-        Los endpoints publicos (/api/auth/*) bypasean este check; cualquier
-        otro endpoint requiere sesion valida o devuelve 403."""
-        return auth.session_valid(self._get_cookie_sid())
-
-    def do_GET(self):
+    def _handle_get_or_head(self):
         parsed_path = urlparse(self.path)
         path = parsed_path.path
 
-        # 0. API publica: estado de auth (sirve para que auth.html sepa si
-        # mostrar modo registro o modo login). No revela sid ni nada sensible.
-        if path == "/api/auth/status":
-            self._send_json({
-                "authenticated": auth.session_valid(self._get_cookie_sid()),
-                "has_credentials": auth.has_credentials(),
-            })
+        # La guardia se aplica antes de decidir la ruta. Esto incluye estáticos,
+        # GET y HEAD, cerrando DNS rebinding sobre todo el servidor.
+        if not self._request_allowed():
+            self.send_error(403, "Forbidden: Cross-origin request")
             return
 
         # 1. API: Obtener logs en tiempo real
         if path == "/api/logs":
-            if not self.check_token():
-                self.send_error(403, "Forbidden: Invalid Token")
-                return
             global log_buffer
             self._send_json({"logs": log_buffer})
-            log_buffer = []  # Limpiar buffer tras lectura
+            if self.command != "HEAD":
+                log_buffer = []  # HEAD nunca debe tener efectos laterales
             return
 
         # 2. API: Obtener estado
         if path == "/api/status":
-            if not self.check_token():
-                self.send_error(403, "Forbidden: Invalid Token")
-                return
-            is_running = active_process is not None and active_process.poll() is None
+            with _scan_lock:
+                process = active_process
+            is_running = process is not None and process.poll() is None
             self._send_json({"status": "running" if is_running else "idle", "port": PORT})
             return
 
         # 2.5 API: Obtener recursos del sistema
         if path == "/api/sysinfo":
-            if not self.check_token():
-                self.send_error(403, "Forbidden: Invalid Token")
-                return
             self._send_json(system_metrics)
             return
 
         # 2.55 API: Estado REAL de Ollama (modelo cargado, VRAM, tokens/s)
         if path == "/api/ollama":
-            if not self.check_token():
-                self.send_error(403, "Forbidden: Invalid Token")
-                return
             self._send_json(ollama_metrics)
             return
 
         # 2.6 API: Datos estructurados de la red para el mapa 3D
         if path == "/api/graph":
-            if not self.check_token():
-                self.send_error(403, "Forbidden: Invalid Token")
-                return
             try:
                 graph = build_graph_data()
             except Exception as e:
@@ -626,155 +694,122 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             self._send_json(graph)
             return
 
-        # 3. Pagina raiz / dashboard: gating por WebAuthn. Sin sesion -> auth.html.
-        unquoted_path = unquote(path)
-        if unquoted_path in ["/", "/index.html", "/agente HADES.html"]:
-            if not auth.session_valid(self._get_cookie_sid()):
-                auth_path = os.path.join(_HERE, "auth.html")
-                if os.path.exists(auth_path):
-                    with open(auth_path, "r", encoding="utf-8") as f:
-                        self._send_bytes(f.read(), "text/html; charset=utf-8")
-                    return
-                self.send_error(503, "auth.html no encontrada")
-                return
-            html_path = os.path.join(_HERE, "agente HADES.html")
-            if os.path.exists(html_path):
-                with open(html_path, "r", encoding="utf-8") as f:
-                    self._send_bytes(f.read(), "text/html; charset=utf-8")
-                return
+        self._serve_static_asset(path)
 
-        # Resto de estaticos (CSS/JS/imagenes): handler por defecto del SDK.
-        super().do_GET()
+    def do_GET(self):
+        self._handle_get_or_head()
+
+    def do_HEAD(self):
+        self._handle_get_or_head()
 
     def _read_json_body(self):
+        content_type = self.headers.get("Content-Type", "")
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            return None, 415, "Content-Type debe ser application/json."
+
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            return None, 411, "Content-Length es obligatorio."
         try:
-            n = int(self.headers.get('Content-Length', '0'))
-            if n <= 0:
-                return {}
-            return json.loads(self.rfile.read(n).decode('utf-8'))
-        except Exception:
-            return {}
+            length = int(raw_length)
+        except (TypeError, ValueError):
+            return None, 400, "Content-Length inválido."
+        if length < 0:
+            return None, 400, "Content-Length inválido."
+        if length > MAX_POST_BODY_BYTES:
+            return None, 413, "El cuerpo supera el límite de 8 KiB."
 
-    def _send_ok_with_cookie(self, set_cookie_fn):
-        """Emite {ok: true} con un Set-Cookie controlado por set_cookie_fn
-        (puede emitir nueva sesion o limpiar la actual)."""
-        body = json.dumps({"ok": True}).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        set_cookie_fn()
-        self.end_headers()
+        body = self.rfile.read(length)
+        if len(body) != length:
+            return None, 400, "Cuerpo HTTP incompleto."
         try:
-            self.wfile.write(body)
-        except Exception:
-            pass
+            params = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None, 400, "JSON inválido."
+        return params, None, None
 
-    def _handle_auth_post(self, path):
-        """Maneja /api/auth/* POST. Devuelve True si la ruta matched."""
-        if path == "/api/auth/register/begin":
-            try:
-                self._send_json(auth.begin_registration(authenticated_sid=self._get_cookie_sid()))
-            except PermissionError as e:
-                self._send_json({"error": str(e)}, code=403)
-            except Exception as e:
-                self._send_json({"error": f"register/begin: {e}"}, code=400)
-            return True
-
-        if path == "/api/auth/register/complete":
-            body = self._read_json_body()
-            try:
-                sid = auth.complete_registration(body.get("challenge_id"), body.get("credential"))
-                self._send_ok_with_cookie(lambda: self._set_session_cookie(sid))
-            except Exception as e:
-                self._send_json({"error": f"register/complete: {e}"}, code=400)
-            return True
-
-        if path == "/api/auth/login/begin":
-            try:
-                self._send_json(auth.begin_authentication())
-            except Exception as e:
-                self._send_json({"error": f"login/begin: {e}"}, code=400)
-            return True
-
-        if path == "/api/auth/login/complete":
-            body = self._read_json_body()
-            try:
-                sid = auth.complete_authentication(body.get("challenge_id"), body.get("credential"))
-                self._send_ok_with_cookie(lambda: self._set_session_cookie(sid))
-            except Exception as e:
-                self._send_json({"error": f"login/complete: {e}"}, code=400)
-            return True
-
-        if path == "/api/auth/logout":
-            sid = self._get_cookie_sid()
-            if sid:
-                auth.session_revoke(sid)
-            self._send_ok_with_cookie(self._clear_session_cookie)
-            return True
-
-        return False
+    @staticmethod
+    def _validate_scan_params(params):
+        if not isinstance(params, dict) or set(params) != {"target", "duration"}:
+            return None, "El JSON debe contener únicamente target y duration."
+        target = params["target"]
+        duration = params["duration"]
+        if not isinstance(target, str) or validate_target(target) is None:
+            return None, "target debe ser un objetivo de red válido."
+        if isinstance(duration, bool) or not isinstance(duration, int):
+            return None, "duration debe ser un entero."
+        if not 5 <= duration <= 300:
+            return None, "duration debe estar entre 5 y 300 segundos."
+        return (target, duration), None
 
     def do_POST(self):
         global active_process, log_buffer
         parsed_path = urlparse(self.path)
         path = parsed_path.path
 
-        # Endpoints de auth: NO requieren check_token (deben ser accesibles
-        # antes de tener sesion). Su propia logica decide quien puede llamarlos.
-        if path.startswith("/api/auth/"):
-            self._handle_auth_post(path)
+        if not self._request_allowed():
+            self.send_error(403, "Forbidden: Cross-origin request")
             return
 
-        if not self.check_token():
-            self.send_error(403, "Forbidden: Invalid Token")
+        if path not in {"/api/scan", "/api/stop"}:
+            self.send_error(404, "Not Found")
             return
 
         # 1. API para lanzar el agente
         if path == "/api/scan":
-            if active_process is not None and active_process.poll() is None:
-                self._send_json({"error": "El agente ya se encuentra activo."}, code=400)
+            params, error_code, error_message = self._read_json_body()
+            if error_code is not None:
+                self._send_json({"error": error_message}, code=error_code)
                 return
+            validated, error_message = self._validate_scan_params(params)
+            if error_message is not None:
+                self._send_json({"error": error_message}, code=400)
+                return
+            target, duration_value = validated
+            duration = str(duration_value)
 
-            # Leer parámetros del cuerpo de la petición. Se usa el lector robusto
-            # _read_json_body(): tolera Content-Length ausente o cuerpo JSON
-            # malformado devolviendo {} en vez de lanzar KeyError/ValueError, lo
-            # que antes tumbaba el hilo del handler (defecto de disponibilidad).
-            params = self._read_json_body()
+            script_path = os.path.join(_HERE, "hades_surveillance_advanced.py")
+            env = _build_scan_env()
 
-            target = params.get("target", "auto")
-            if not target or not target.strip():
-                target = "auto"
-            duration = str(params.get("duration", 30))
+            # Popen y publicación de active_process son una única sección
+            # crítica. Una segunda petición no puede observar un estado IDLE
+            # entre la comprobación y el arranque.
+            with _scan_lock:
+                if active_process is not None and active_process.poll() is None:
+                    self._send_json(
+                        {"error": "El agente ya se encuentra activo."}, code=400
+                    )
+                    return
+                try:
+                    process = _launch_scan_process(
+                        [sys.executable, script_path, target, duration],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        bufsize=1,
+                        cwd=_HERE,
+                        env=env,
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    add_log(f"[ERROR] No se pudo iniciar el agente: {exc}")
+                    self._send_json(
+                        {"error": "No se pudo iniciar el agente."}, code=500
+                    )
+                    return
+                active_process = process
 
             add_log(f"Lanzando HADES en rango '{target}' con captura de {duration}s...")
-            
-            script_path = os.path.join(_HERE, "hades_surveillance_advanced.py")
-            
-            # Ejecutar el proceso en un hilo separado para que no bloquee el servidor
-            def run_subprocess():
+
+            def monitor_subprocess(process):
                 global active_process
-                env = os.environ.copy()
-                env["PYTHONIOENCODING"] = "utf-8"
-                env["PYTHONUTF8"] = "1"
-                env["HADES_NON_INTERACTIVE"] = "1"
-                
-                active_process = subprocess.Popen(
-                    [sys.executable, script_path, target, duration],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding='utf-8',
-                    bufsize=1,
-                    cwd=_HERE,
-                    env=env
-                )
-                
                 # Leer la salida en tiempo real de forma segura
                 # Si el proceso es terminado forzosamente desde /api/stop,
                 # el stream se cierra y readline lanza ValueError/OSError.
                 # Capturamos estas excepciones para no colapsar el hilo.
                 try:
-                    for line in iter(active_process.stdout.readline, ''):
+                    for line in iter(process.stdout.readline, ""):
                         if line:
                             add_log(line.strip())
                 except (ValueError, OSError):
@@ -782,44 +817,50 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
                     pass
                 finally:
                     try:
-                        active_process.stdout.close()
+                        process.stdout.close()
                     except Exception:
                         pass
                     try:
-                        active_process.wait(timeout=5)
-                    except Exception:
-                        pass
-                    exit_code = active_process.returncode if active_process else -1
+                        process.wait(timeout=5)
+                    except (subprocess.TimeoutExpired, TimeoutError):
+                        terminate_process_tree(process, timeout=3)
+                    exit_code = process.returncode
                     add_log(f"--- AGENTE FINALIZADO (Codigo de salida: {exit_code}) ---")
-                    active_process = None
+                    with _scan_lock:
+                        if active_process is process and process.poll() is not None:
+                            active_process = None
 
-            threading.Thread(target=run_subprocess, daemon=True).start()
+            threading.Thread(
+                target=monitor_subprocess, args=(process,), daemon=True
+            ).start()
 
             self._send_json({"message": "Escaneo iniciado correctamente."})
             return
 
         # 2. API para parada forzada de emergencia — TERMINACIÓN INMEDIATA
         if path == "/api/stop":
+            params, error_code, error_message = self._read_json_body()
+            if error_code is not None:
+                self._send_json({"error": error_message}, code=error_code)
+                return
+            if params != {}:
+                self._send_json(
+                    {"error": "La parada sólo admite un objeto JSON vacío."},
+                    code=400,
+                )
+                return
+
             add_log("[EMERGENCIA] ⚡ PARADA DE EMERGENCIA ACTIVADA — Terminando todos los procesos...")
 
-            if active_process is not None:
-                pid_msg = active_process.pid
+            with _scan_lock:
+                process = active_process
+            if process is not None:
+                pid_msg = process.pid
                 add_log(f"[EMERGENCIA] taskkill /f /t sobre PID {pid_msg} y árbol de hijos...")
             else:
                 add_log("[INFO] Sin proceso de agente activo registrado — limpieza preventiva.")
 
-            _kill_active_tree()
-            add_log(f"[EMERGENCIA] Limpiando herramientas huérfanas: {', '.join(HADES_CHILD_TOOLS)}...")
-            _kill_child_tools()
-
-            # Compatibilidad: pythons con ventana hades* (heredado de versiones previas)
-            try:
-                subprocess.run(
-                    'taskkill /f /fi "WINDOWTITLE eq hades*" /fi "IMAGENAME eq python.exe"',
-                    shell=True, capture_output=True, timeout=5
-                )
-            except Exception:
-                pass
+            tree_stopped = _kill_active_tree()
 
             # Liberar tambien el modelo IA: si el agente se detiene, no debe
             # quedar el modelo ocupando RAM/VRAM. Ollama acepta keep_alive=0
@@ -837,6 +878,20 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
                 "tokens_per_second": 0.0, "total_duration_ms": 0,
                 "last_metric_age_seconds": None, "error": None,
             }
+
+            if not tree_stopped:
+                add_log(
+                    "[ERROR] No se pudo confirmar la terminación completa del "
+                    "árbol del agente."
+                )
+                self._send_json(
+                    {
+                        "error": "No se confirmó la terminación del árbol del agente.",
+                        "reset": False,
+                    },
+                    code=500,
+                )
+                return
 
             add_log("[OK] ✅ Subprocesos terminados, modelo Ollama liberado. Estado del servidor reseteado.")
             log_buffer = ["[RESET] Agente detenido y estado reiniciado a CERO. Listo para una nueva auditoría."]
@@ -857,6 +912,8 @@ class HadesHTTPServer(ThreadingHTTPServer):
 
 
 def start_server():
+    runtime_status = _initialize_ollama_runtime()
+    _start_background_monitors()
     server = HadesHTTPServer(('127.0.0.1', PORT), SecureHadesHandler)
     server.daemon_threads = True
     url = f"http://localhost:{PORT}/"
@@ -864,7 +921,8 @@ def start_server():
     print("=" * 70)
     print("   HADES SECURITY COMMAND CENTER SERVER ACTIVO")
     print(f"   Puerto: {PORT}")
-    print(f"   Auth: WebAuthn / Windows Hello (cookie HADES_SID)")
+    print(f"   Acceso: directo, sin login (guardia de mismo origen en las APIs)")
+    print(f"   Ollama: {runtime_status.state} — {runtime_status.detail}")
     print(f"   Abriendo navegador en: {url}")
     print("=" * 70)
 

@@ -699,6 +699,28 @@
             color: var(--text-secondary);
         }
 
+        .ai-status-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .ai-runtime-line {
+            display: block;
+            max-width: 100%;
+            overflow: hidden;
+            color: rgba(136, 192, 152, 0.62);
+            font-size: 0.58rem;
+            letter-spacing: 0.2px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        #aiRuntimeState {
+            font-weight: 600;
+        }
+
         .ai-status-dot {
             width: 6px;
             height: 6px;
@@ -1045,8 +1067,11 @@
 </div>
 <div class="form-group">
     <label for="targetRange">Rango de Red de Destino (manual)</label>
-    <input type="text" id="targetRange" class="form-control" placeholder="ej. 10.77.1.0/24 - 10.77.2.1/24">
+    <input type="text" id="targetRange" class="form-control" placeholder="ej. 10.77.0.0/16 · 10.77.140.0/24 · 10.77.100.5">
     <span id="rangeInfo" style="font-size:0.75rem; color: var(--text-secondary); margin-top:4px; display:block;"></span>
+    <small style="font-size:0.72rem; color: var(--text-secondary); margin-top:2px; display:block;">
+        Acepta una IP (<code>10.77.100.5</code>) o un CIDR (<code>10.77.0.0/16</code>). Los objetivos enrutados tras un router se descubren por capa 3 automáticamente. Un guión entre dos redes no es un formato válido.
+    </small>
 </div>
 
                 <div class="form-group">
@@ -1254,9 +1279,16 @@ Esperando órdenes...</div>
                             <div class="ai-bar-track"><div class="ai-bar-fill amber" id="aiMemBar"></div></div>
                         </div>
                     </div>
-                    <div class="ai-status-line">
+                    <div class="ai-status-line" role="status" aria-live="polite">
                         <div class="ai-status-dot idle" id="aiStatusDot2"></div>
-                        <span id="aiStatusText">EN ESPERA</span>
+                        <div class="ai-status-copy">
+                            <span id="aiStatusText">EN ESPERA</span>
+                            <span class="ai-runtime-line">
+                                <span id="aiRuntimeState">NO COMPROBADO</span>
+                                <span aria-hidden="true"> · </span>
+                                <span id="aiRuntimeDetail">Runtime de Ollama aún no evaluado.</span>
+                            </span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1281,9 +1313,9 @@ Esperando órdenes...</div>
 
     <!-- JavaScript del Ecosistema -->
     <script>
-        // Token de seguridad dinámico inyectado por el backend
-        const HADES_SECURITY_TOKEN = '';
-        const REAL_SURVEILLANCE_TOKEN = HADES_SECURITY_TOKEN || new URLSearchParams(window.location.search).get('token') || '';
+        // El dashboard no maneja tokens de sesion: el backend autoriza por
+        // mismo origen (solo acepta peticiones nacidas de esta misma pagina en
+        // 127.0.0.1:8080). Las llamadas fetch de abajo van sin credenciales.
 
         const consoleLog = document.getElementById("consoleLog");
         const statusDot = document.getElementById("statusDot");
@@ -1528,6 +1560,19 @@ Esperando órdenes...</div>
         const aiStatusDot    = document.getElementById('aiStatusDot');
         const aiStatusDot2   = document.getElementById('aiStatusDot2');
         const aiStatusText   = document.getElementById('aiStatusText');
+        const aiRuntimeState = document.getElementById('aiRuntimeState');
+        const aiRuntimeDetail = document.getElementById('aiRuntimeDetail');
+
+        const AI_RUNTIME_STATES = Object.freeze({
+            healthy: ['RUNTIME DISPONIBLE', 'var(--neon-accent)'],
+            started: ['INICIADO POR HADES', 'var(--neon-accent)'],
+            disabled: ['RUNTIME DESHABILITADO', '#ff9f00'],
+            unsupported_endpoint: ['ENDPOINT NO ADMITIDO', 'var(--neon-alert)'],
+            blocked_stale_listener: ['PUERTO BLOQUEADO', 'var(--neon-alert)'],
+            missing_binary: ['OLLAMA NO INSTALADO', 'var(--neon-alert)'],
+            startup_failed: ['FALLO DE ARRANQUE', 'var(--neon-alert)'],
+            not_checked: ['NO COMPROBADO', '#ff9f00'],
+        });
 
         // Etiquetas reales para que el usuario vea de inmediato qué es cada métrica
         (function relabelAiMetrics() {
@@ -1552,7 +1597,26 @@ Esperando órdenes...</div>
             aiStatusDot2.className = `ai-status-dot ${dotClass}`;
         }
 
+        function applyOllamaRuntimeState(snapshot) {
+            const state = String(snapshot?.runtime_state || 'not_checked');
+            const runtimeView = Object.hasOwn(AI_RUNTIME_STATES, state)
+                ? AI_RUNTIME_STATES[state]
+                : ['ESTADO DESCONOCIDO', '#ff9f00'];
+            const [label, color] = runtimeView;
+            const rawDetail = snapshot?.runtime_detail;
+            const detail = typeof rawDetail === 'string' && rawDetail.trim()
+                ? rawDetail.trim()
+                : 'Sin diagnóstico del runtime.';
+
+            aiRuntimeState.textContent = label;
+            aiRuntimeState.style.color = color;
+            aiRuntimeDetail.textContent = detail;
+            aiRuntimeDetail.title = detail;
+        }
+
         function applyOllamaSnapshot(d) {
+            applyOllamaRuntimeState(d || {});
+
             // Caso DESCONECTADO: Ollama no responde
             if (!d || !d.connected) {
                 aiModelBar.style.width = '0%';    aiModelVal.textContent = 'sin Ollama';
@@ -1621,7 +1685,7 @@ Esperando órdenes...</div>
 
         async function fetchOllamaMetrics() {
             try {
-                const res = await fetch(`/api/ollama?token=${REAL_SURVEILLANCE_TOKEN}`);
+                const res = await fetch(`/api/ollama`);
                 if (!res.ok) { applyOllamaSnapshot({ connected: false }); return; }
                 const data = await res.json();
                 applyOllamaSnapshot(data);
@@ -1679,7 +1743,7 @@ Esperando órdenes...</div>
 
         async function fetchSystemResources() {
             try {
-                const res = await fetch(`/api/sysinfo?token=${REAL_SURVEILLANCE_TOKEN}`);
+                const res = await fetch(`/api/sysinfo`);
                 if (!res.ok) return;
                 const data = await res.json();
                 
@@ -1728,7 +1792,7 @@ Esperando órdenes...</div>
         // Consultar el estado del agente y logs del backend
         async function fetchStatus() {
             try {
-                const res = await fetch(`/api/status?token=${REAL_SURVEILLANCE_TOKEN}`);
+                const res = await fetch(`/api/status`);
                 const data = await res.json();
                 const isRunning = data.status === "running";
                 
@@ -1752,7 +1816,7 @@ Esperando órdenes...</div>
 
         async function fetchLogs() {
             try {
-                const res = await fetch(`/api/logs?token=${REAL_SURVEILLANCE_TOKEN}`);
+                const res = await fetch(`/api/logs`);
                 const data = await res.json();
                 if (data.logs && data.logs.length > 0) {
                     data.logs.forEach(log => {
@@ -1766,6 +1830,18 @@ Esperando órdenes...</div>
 
         // Lanzar Vigilancia del Agente
         async function startScan() {
+            // Validación temprana del modo Custom: si el objetivo manual es
+            // inválido, avisamos y NO reseteamos la UI (evita dejar el mapa en
+            // blanco por un error de formato). El backend acepta IP o CIDR.
+            const scanMode = autoOption.value;
+            let scanTarget = (scanMode === 'auto' || scanMode === 'full') ? 'auto' : targetRangeInput.value.trim();
+            if (scanMode === 'custom') {
+                const d = describeTarget(scanTarget);
+                if (!d.ok) {
+                    logToConsole(`[ERROR] Objetivo inválido en modo Custom: "${scanTarget || '(vacío)'}". Usa una IP (10.77.100.5) o un CIDR (10.77.0.0/16). Un guión entre dos redes no es válido.`);
+                    return;
+                }
+            }
             // Resetear todos los pasos a pending al iniciar un nuevo escaneo
             document.querySelectorAll(".timeline-item").forEach(item => {
                 item.className = "timeline-item";
@@ -1785,24 +1861,18 @@ Esperando órdenes...</div>
                 window.networkGraph.setActivityState("ACTIVO", "#00ff66");
             }
 
-            // Determinar objetivo basado en modo de escaneo
-            let target = '';
-            const mode = autoOption.value;
-            if (mode === 'auto' || mode === 'full') {
-                target = 'auto';
-            } else {
-                target = targetRangeInput.value.trim();
-            }
+            // Objetivo ya determinado y validado al entrar en startScan
+            const target = scanTarget;
+            const mode = scanMode;
             const duration = parseInt(durationInput.value) || 30;
 
             logToConsole(`>>> Enviando petición de escaneo. Modo: ${mode} | Objetivo: ${target || 'auto-detect'} | Captura: ${duration}s...`);
 
             try {
-                const res = await fetch(`/api/scan?token=${REAL_SURVEILLANCE_TOKEN}`, {
+                const res = await fetch(`/api/scan`, {
                     method: "POST",
                     headers: {
-                        "Content-Type": "application/json",
-                        "X-Hades-Token": REAL_SURVEILLANCE_TOKEN
+                        "Content-Type": "application/json"
                     },
                     body: JSON.stringify({ target, duration })
                 });
@@ -1835,12 +1905,12 @@ Esperando órdenes...</div>
             logToConsole("⚡ [EMERGENCIA] PARADA DE EMERGENCIA ACTIVADA — Terminando todos los procesos del agente...");
 
             try {
-                const res = await fetch(`/api/stop?token=${REAL_SURVEILLANCE_TOKEN}`, {
+                const res = await fetch(`/api/stop`, {
                     method: "POST",
                     headers: {
-                        "Content-Type": "application/json",
-                        "X-Hades-Token": REAL_SURVEILLANCE_TOKEN
-                    }
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({})
                 });
                 const data = await res.json();
                 logToConsole(`⚡ ${data.message}`);
@@ -1904,26 +1974,37 @@ Esperando órdenes...</div>
         autoOption.addEventListener('change', () => {
             updateModeVisibility();
         });
-        // Calcular y mostrar número de IPs al ingresar rango manual
-        targetRangeInput.addEventListener('input', () => {
-            const val = targetRangeInput.value.trim();
-            const count = calculateIpCount(val);
-            if (count > 0) {
-                rangeInfo.textContent = `${count} IPs totales`;
-            } else {
-                rangeInfo.textContent = '';
+        // Validar y describir el objetivo manual (IP única o CIDR) para la ayuda
+        // en vivo bajo el input. Devuelve {ok, text, warn}.
+        function describeTarget(val) {
+            val = (val || '').trim();
+            if (!val) return { ok: false, text: '', warn: false };
+            const ipRe = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (ipRe.test(val)) {
+                const okOctets = val.split('.').every(o => +o >= 0 && +o <= 255);
+                return okOctets ? { ok: true, text: '1 IP (host único)', warn: false }
+                                : { ok: false, text: 'IP inválida', warn: false };
             }
-        });
-        // Función sencilla de cálculo de IPs a partir de CIDR (solo una zona);
-        function calculateIpCount(cidr) {
-            // Extraer prefijo después de '/'
-            const match = cidr.match(/\/(\d{1,2})$/);
-            if (!match) return 0;
-            const prefix = parseInt(match[1]);
-            if (prefix < 0 || prefix > 32) return 0;
-            const hosts = Math.pow(2, 32 - prefix) - 2;
-            return hosts > 0 ? hosts : 0;
+            const m = val.match(/^(\d{1,3}\.){3}\d{1,3}\/(\d{1,2})$/);
+            if (m) {
+                const octetsOk = val.split('/')[0].split('.').every(o => +o >= 0 && +o <= 255);
+                const prefix = parseInt(m[2]);
+                if (!octetsOk) return { ok: false, text: 'IP inválida en el CIDR', warn: false };
+                if (prefix < 0 || prefix > 32) return { ok: false, text: 'Prefijo inválido (0-32)', warn: false };
+                const total = Math.pow(2, 32 - prefix);
+                const usable = prefix <= 30 ? total - 2 : total;
+                const big = usable > 1024;
+                const txt = `${usable.toLocaleString()} IPs` + (big ? ' — rango grande: la auditoría profunda puede tardar (el descubrimiento va acotado)' : '');
+                return { ok: true, text: txt, warn: big };
+            }
+            return { ok: false, text: 'Formato inválido: usa una IP o un CIDR (ej. 10.77.0.0/16)', warn: false };
         }
+        // Ayuda en vivo al escribir el rango manual
+        targetRangeInput.addEventListener('input', () => {
+            const d = describeTarget(targetRangeInput.value);
+            rangeInfo.textContent = d.text;
+            rangeInfo.style.color = d.ok ? (d.warn ? '#ff9f00' : 'var(--text-secondary)') : '#ff5588';
+        });
         // Inicializar visibilidad al cargar
         updateModeVisibility();
 
