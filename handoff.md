@@ -102,3 +102,17 @@ Mejorar HADES SENTINEL. En esta sesión: que la **Fase 1 de descubrimiento** fun
   4. Token también en GET sensibles (`/api/graph`, `/api/logs`); `chip.innerHTML` del dock (hoy títulos internos).
   5. Decidir `AUDITORIA_CODIGO_2026-07-29.md` (borrado sin commit; el plan del 16-10 pide recuperarlo o documentarlo).
   6. `git push` sólo cuando el usuario lo pida.
+
+## Sesión 2026-11-17 (3ª parte) — escaneo en vivo + mapa de red rediseñado — anexo
+- **Escaneo en vivo** de la Wi-Fi `192.168.200.0/24` (gateway 192.168.200.143): 3 hosts (`.45`, `.143`, `.195`), captura COMPLETA de 523 paquetes; el usuario lo detuvo durante la Fase 4 (sin DOCX). Informe parcial en `informes/informe_20261117_1551/`.
+- **Mapa de red (`network_map_3d.js`) — aprobado por el usuario («exelente»):** diagrama por capas fijas: IP externas en filas arriba (por volumen) → nube INTERNET → GATEWAY al centro → hosts LAN abajo (por IP); rótulo con IP/tipo bajo cada nodo; una línea recta por conexión (retorno transparente superpuesto); paquetes por saltos host→gateway→nube→destino con estela, color por protocolo y leyenda; latido de nodos, alerta en riesgo alto, barrido ICMP en descubrimiento y sondas en el host auditado; sin física ni órbita; «Centrar» = vista frontal. Commits `9a67ee0`, `6223e84`, `80f0d8a`.
+- **Intentos fallidos (se suman a la sección 4):**
+  - Mover la cámara a mano cada cuadro (órbita) pelea con los TrackballControls y la colapsa al centro → si se quiere giro, rotar `scene()`; hoy no hay órbita (el usuario prefirió vista fija).
+  - Layout radial con fuerzas = «erizo» ilegible para el operador → posiciones fijas por capas.
+  - `linkCurvature` para dúplex dibujaba óvalos grandes → una línea recta + carril de retorno transparente.
+  - `linkVisibility(false)` descarta el enlace y sus partículas → usar color transparente y ancho 0.
+  - Quitar la fuerza `link` (`d3Force('link', null)`) deja de resolver ids → no se dibujan líneas ni paquetes; mantenerla con `strength(0)`.
+  - Al fijar nodos, arrastrarlos los deja clavados donde se sueltan → `enableNodeDrag(false)`.
+  - Cada pestaña del dashboard vacía `/api/logs` (GET con efecto de vaciado): abrir pestañas de prueba le roba el log en vivo a la del usuario; cerrarlas al terminar.
+  - La herramienta `zoom` de capturas del navegador dispara eventos de rueda sobre el canvas y mueve la cámara → usar capturas completas.
+- **Próximos pasos:** 1) cierre limpio del dashboard cuando el usuario termine (procesos, :8080, `.hades_token`); 2) relanzar el escaneo completo si quiere el DOCX; 3) pendientes de seguridad del anexo anterior (MCP, Ollama loopback, token en GET, decidir `AUDITORIA_CODIGO_2026-07-29.md`).
