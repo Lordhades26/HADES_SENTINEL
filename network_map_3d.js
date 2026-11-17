@@ -32,7 +32,7 @@ const HADES_PROTO_DEFAULT = { color: "#ff5cd6", size: 1.9, label: "Otro TCP/UDP"
 const HADES_PROBE = { color: "#ffd400", size: 1.6 };     // sondas del auditor
 const HADES_KEEPALIVE = { color: "#8fb8c8", size: 1.4 }; // ARP / keepalive de fondo
 // Estela del paquete: [retardo ms, tamaño relativo] de los destellos que lo siguen.
-const HADES_TRAIL = [[45, 0.62], [90, 0.36]];
+const HADES_TRAIL = [[40, 0.6], [80, 0.32]];
 
 // Velocidades (fracción del enlace por cuadro): la WAN es más lenta que la LAN.
 const HADES_SPEED_LAN = 0.03;
@@ -66,7 +66,7 @@ class HadesGraph3D {
 
     // Color de nodo según semántica SOC (verde/amarillo/rojo/blanco/azul)
     static color(node) {
-        if (node.isExternal) return "#ff00aa";                // magenta = IP externa (Internet)
+        if (node.isExternal || node.isCloud) return "#ff00aa"; // magenta = Internet
         if (node.isRouter) return "#18d0ff";                 // azul = infraestructura crítica
         if (node.risk === "ALTO" || node.risk === "CRÍTICO") return "#ff0033"; // rojo = amenaza
         if (node.risk === "MEDIO") return "#ffd400";          // amarillo = sospechoso
@@ -78,7 +78,8 @@ class HadesGraph3D {
 
     // Ícono de red según el tipo de dispositivo (estilo topología/Cisco)
     static iconFor(node) {
-        if (node.isExternal) return "☁️";
+        if (node.isCloud) return "☁️";
+        if (node.isExternal) return "🌍";
         const t = (node.device_type || "").toLowerCase();
         if (node.isRouter || t.includes("router") || t.includes("gateway")) return "🌐";
         if (t.includes("impresora") || t.includes("printer")) return "🖨️";
@@ -142,12 +143,21 @@ class HadesGraph3D {
                 depthWrite: false, blending: THREE.AdditiveBlending,
             });
             const sp = new THREE.Sprite(mat);
-            const s = st.size * 4.2;
+            const s = st.size * 1.9;
             sp.scale.set(s, s, 1);
             return sp;
         } catch (e) {
             return undefined;
         }
+    }
+
+    // Texto del rótulo: [línea principal, línea secundaria opcional].
+    _etiqueta(node) {
+        if (node.isCloud) return ["INTERNET", ""];
+        if (node.isRouter) return ["GATEWAY", node.id !== "GATEWAY" ? node.ip : (node.ip || "")];
+        if (node.isExternal) return [node.ip || node.id, ""];
+        const tipo = (node.device_type || "").replace(/\s*\(.*\)$/, "").slice(0, 22);
+        return [node.ip || node.id, tipo];
     }
 
     // Nodo = grupo con ícono del dispositivo + halo de actividad.
@@ -157,7 +167,8 @@ class HadesGraph3D {
             if (typeof THREE === "undefined" || !THREE.Sprite) return undefined;
             const emoji = HadesGraph3D.iconFor(node);
             const color = HadesGraph3D.color(node);
-            const key = emoji + color;
+            const etiqueta = this._etiqueta(node);
+            const key = emoji + color + etiqueta.join("|");
             if (node.__obj && node.__objKey === key) return node.__obj;
 
             const S = 128;
@@ -176,7 +187,7 @@ class HadesGraph3D {
             const tex = new THREE.CanvasTexture(cv);
             tex.anisotropy = 4;
             const icon = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-            const base = node.isRouter ? 17 : (node.isExternal ? 8 : 12);
+            const base = node.isRouter ? 18 : (node.isCloud ? 17 : (node.isExternal ? 11 : 15));
             icon.scale.set(base, base, 1);
 
             const halo = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -185,9 +196,28 @@ class HadesGraph3D {
             }));
             halo.scale.set(base * 2.2, base * 2.2, 1);
 
+            // Rótulo legible bajo el ícono (IP / función), sin tener que pasar el mouse.
+            const lc = document.createElement("canvas");
+            lc.width = 512; lc.height = 128;
+            const lx = lc.getContext("2d");
+            lx.textAlign = "center"; lx.textBaseline = "middle";
+            lx.font = "bold 44px Consolas, 'Courier New', monospace";
+            lx.lineWidth = 8; lx.strokeStyle = "rgba(0,0,0,0.85)";
+            lx.strokeText(etiqueta[0], 256, 40); lx.fillStyle = "#e8fff2"; lx.fillText(etiqueta[0], 256, 40);
+            if (etiqueta[1]) {
+                lx.font = "34px Consolas, 'Courier New', monospace";
+                lx.strokeText(etiqueta[1], 256, 96); lx.fillStyle = color; lx.fillText(etiqueta[1], 256, 96);
+            }
+            const ltex = new THREE.CanvasTexture(lc);
+            const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: ltex, transparent: true, depthWrite: false }));
+            const lw = node.isExternal ? 34 : 46;
+            label.scale.set(lw, lw / 4, 1);
+            label.position.set(0, -(base * 0.5 + lw / 8 + 1), 0);
+
             const group = new THREE.Group();
             group.add(halo);
             group.add(icon);
+            group.add(label);
             node.__obj = group;
             node.__objKey = key;
             node.__icon = icon;
@@ -260,15 +290,8 @@ class HadesGraph3D {
             .warmupTicks(30)
             .cooldownTime(6000)
             .onNodeClick(n => this.openPanel(n))
-            .onNodeDrag(() => { this._lastInteraction = performance.now(); })
-            .onNodeDragEnd(n => {
-                // El motor fija el nodo donde se suelta. El router vuelve siempre al
-                // centro (ancla de la topología); el resto se libera y la física lo
-                // reacomoda, como un enlace elástico.
-                if (n.isRouter) { n.fx = 0; n.fy = 0; n.fz = 0; }
-                else { n.fx = undefined; n.fy = undefined; n.fz = undefined; }
-                this.graph.d3ReheatSimulation();
-            })
+            // Diagrama ordenado: los nodos no se arrastran (cada uno tiene su lugar).
+            .enableNodeDrag(false)
             .onBackgroundClick(() => this.closePanel());
         } catch (err) {
             this.container.innerHTML = '<div style="padding:16px;color:#ff6a00;font-family:monospace;font-size:12px">' +
@@ -301,7 +324,7 @@ class HadesGraph3D {
 
         // Bucles de animación: cuadros (pulsos, cámara) y emisor de paquetes.
         this._lastFrame = performance.now();
-        this._lastInteraction = performance.now();   // la órbita espera ~9 s tras cargar
+        this._lastInteraction = performance.now();
         const frame = (t) => { this._onFrame(t); this._raf = requestAnimationFrame(frame); };
         this._raf = requestAnimationFrame(frame);
         this._trafficTimer = setInterval(() => this._trafficTick(0.1), 100);
@@ -312,33 +335,17 @@ class HadesGraph3D {
         this.setActivityState("EN ESPERA", "#18d0ff");
     }
 
-    // Fuerzas: router anclado, LAN en anillo interior, Internet en capa exterior.
+    // Sin física: el diagrama por capas usa posiciones fijas (ver _layout).
+    // Una simulación de fuerzas dispersaba los nodos en forma de «erizo».
     _setupForces() {
         try {
-            const charge = this.graph.d3Force("charge");
-            if (charge && charge.strength) {
-                charge.strength(n => n.isRouter ? -320 : (n.isExternal ? -35 : -140));
-            }
+            ["charge", "center"].forEach(f => this.graph.d3Force(f, null));
+            // La fuerza de enlaces se conserva con intensidad 0: es la que resuelve
+            // los ids origen/destino a nodos (sin ella no se dibujan líneas ni paquetes).
             const link = this.graph.d3Force("link");
-            if (link && link.distance) {
-                link.distance(l => l.kind === "wan" ? 120 : 62).strength(l => l.kind === "wan" ? 0.25 : 0.55);
-            }
-            // Fuerza radial propia (sin depender de d3 externo).
-            let nodes = [];
-            const radial = (alpha) => {
-                for (const n of nodes) {
-                    if (n.isRouter) continue;
-                    const r = n.isExternal ? 230 : 80;
-                    const x = n.x || 0, y = n.y || 0, z = n.z || 0;
-                    const d = Math.sqrt(x * x + y * y + z * z) || 1;
-                    const k = ((r - d) / d) * alpha * 0.09;
-                    n.vx += x * k; n.vy += y * k * 0.6; n.vz += z * k;
-                }
-            };
-            radial.initialize = (ns) => { nodes = ns; };
-            this.graph.d3Force("radial", radial);
+            if (link && link.strength) link.strength(0);
         } catch (e) {
-            console.warn("[HadesGraph3D] fuerzas personalizadas no disponibles:", e);
+            console.warn("[HadesGraph3D] no se pudieron desactivar las fuerzas:", e);
         }
     }
 
@@ -382,7 +389,7 @@ class HadesGraph3D {
 
     _linkKey(a, b) { return a + "->" + b; }
 
-    _upsertLink(a, b, kind) {
+    _upsertLink(a, b, kind, reverse) {
         const key = this._linkKey(a, b);
         let l = this._links.get(key);
         if (!l) {
@@ -390,8 +397,8 @@ class HadesGraph3D {
             this._links.set(key, l);
         }
         l.kind = kind;
-        // Carril de retorno (nodo → gateway): invisible, comparte la línea de ida.
-        l.__reverse = b === this.routerId;
+        // Carril de retorno: invisible, comparte la línea de ida.
+        l.__reverse = !!reverse;
         return l;
     }
 
@@ -441,42 +448,50 @@ class HadesGraph3D {
         }
         this.routerId = routerId;
 
-        // Hosts internos de la LAN, cada uno con enlace dúplex al gateway.
+        // Enlace visible (a → b) + carril de retorno transparente (b → a) por la misma línea.
+        const conectar = (a, b, kind) => {
+            wantLinks.add(this._linkKey(a, b));
+            wantLinks.add(this._linkKey(b, a));
+            this._upsertLink(a, b, kind, false);
+            this._upsertLink(b, a, kind, true);
+        };
+
+        // Capa inferior: hosts de la LAN, colgando del gateway.
+        const lan = [];
         hosts.forEach(h => {
             const isR = h.ip === routerId;
             this._upsertNode(h.ip, Object.assign({ isRouter: isR }, h), routerId);
             wantNodes.add(h.ip);
-            if (!isR) {
-                wantLinks.add(this._linkKey(routerId, h.ip));
-                wantLinks.add(this._linkKey(h.ip, routerId));
-                this._upsertLink(routerId, h.ip, "lan");
-                this._upsertLink(h.ip, routerId, "lan");
-            }
+            if (!isR) { lan.push(h.ip); conectar(routerId, h.ip, "lan"); }
         });
 
-        // Internet: toda IP externa cuelga del gateway (el tráfico sale por él).
+        // Capa superior: Internet. Una sola troncal gateway → nube, y las IP
+        // externas cuelgan de la nube (no del gateway): nada de «erizo».
         const extSet = new Set(externals);
         connections.forEach(cn => {
             if (!this.hostsById[cn.dst]) extSet.add(cn.dst);
             if (!this.hostsById[cn.src] && cn.src !== routerId) extSet.add(cn.src);
         });
-        extSet.forEach(ip => {
-            if (wantNodes.has(ip)) return;
-            this._upsertNode(ip, { ip, isExternal: true, device_type: "Internet (externo)",
+        const ext = [...extSet].filter(ip => !wantNodes.has(ip));
+        this._cloudId = "INTERNET";
+        if (ext.length) {
+            this._upsertNode(this._cloudId, { ip: "Internet", isCloud: true, device_type: "Internet (nube)",
                 risk: "INFORMATIVO", ports: [] }, routerId);
-            wantNodes.add(ip);
-            wantLinks.add(this._linkKey(routerId, ip));
-            wantLinks.add(this._linkKey(ip, routerId));
-            this._upsertLink(routerId, ip, "wan");
-            this._upsertLink(ip, routerId, "wan");
-        });
+            wantNodes.add(this._cloudId);
+            conectar(routerId, this._cloudId, "wan");
+            ext.forEach(ip => {
+                this._upsertNode(ip, { ip, isExternal: true, device_type: "Internet (externo)",
+                    risk: "INFORMATIVO", ports: [] }, this._cloudId);
+                wantNodes.add(ip);
+                conectar(this._cloudId, ip, "wan");
+            });
+        }
 
         // Quitar lo que ya no existe
         [...this._nodes.keys()].forEach(id => { if (!wantNodes.has(id)) this._nodes.delete(id); });
         [...this._links.keys()].forEach(k => { if (!wantLinks.has(k)) this._links.delete(k); });
 
-        const router = this._nodes.get(routerId);
-        if (router) { router.fx = 0; router.fy = 0; router.fz = 0; }
+        this._layout(routerId, lan, ext);
 
         const nodes = [...this._nodes.values()];
         // Los enlaces se entregan con ids: la librería los resuelve a los mismos objetos nodo.
@@ -494,6 +509,35 @@ class HadesGraph3D {
             this._fittedCount = count;
             setTimeout(() => this._encuadrar(900), 1600);
         }
+    }
+
+    // Diagrama por capas con posiciones fijas (lectura inmediata para el operador):
+    //   Internet (filas arriba, ordenadas por volumen de tráfico)
+    //   └ nube INTERNET ─ gateway (centro) ─ hosts LAN (filas abajo, por IP)
+    _layout(routerId, lan, ext) {
+        const fijar = (id, x, y) => {
+            const n = this._nodes.get(id);
+            if (!n) return;
+            n.fx = x; n.fy = y; n.fz = 0;
+            if (n.x == null) { n.x = x; n.y = y; n.z = 0; }
+        };
+        const filas = (ids, porFila, dx, y0, dy) => {
+            ids.forEach((id, i) => {
+                const fila = Math.floor(i / porFila);
+                const enFila = Math.min(porFila, ids.length - fila * porFila);
+                const col = i % porFila;
+                fijar(id, (col - (enFila - 1) / 2) * dx, y0 + fila * dy);
+            });
+        };
+        const ipNum = ip => String(ip).split(".").reduce((a, b) => a * 256 + (parseInt(b, 10) || 0), 0);
+        const volumen = {};
+        this._flows.forEach(f => { volumen[f.dst] = (volumen[f.dst] || 0) + (f.count || 0); });
+
+        fijar(routerId, 0, 0);
+        fijar(this._cloudId, 0, 62);
+        filas(ext.slice().sort((a, b) => (volumen[b] || 0) - (volumen[a] || 0) || ipNum(a) - ipNum(b)),
+              7, 42, 122, 40);
+        filas(lan.slice().sort((a, b) => ipNum(a) - ipNum(b)), 6, 58, -74, -62);
     }
 
     // ── Motor de tráfico ────────────────────────────────────────────────────
@@ -529,11 +573,15 @@ class HadesGraph3D {
         hop(0);
     }
 
-    // Ruta realista: todo pasa por el gateway (salvo que un extremo sea el gateway).
+    // Ruta realista: LAN ↔ gateway ↔ nube ↔ IP externa.
     _route(src, dst) {
-        const R = this.routerId;
-        if (src === R || dst === R) return [src, dst];
-        return [src, R, dst];
+        const R = this.routerId, C = this._cloudId;
+        const esExt = id => { const n = this._nodes.get(id); return !!(n && n.isExternal); };
+        if (esExt(src) && esExt(dst)) return [src, C, dst];
+        const subir = id => id === R ? [R] : (id === C ? [C, R] : (esExt(id) ? [id, C, R] : [id, R]));
+        const ida = subir(src);
+        const vuelta = subir(dst).slice().reverse();
+        return ida.concat(vuelta.slice(1));
     }
 
     // Petición y respuesta (la respuesta llega tras la latencia del servidor).
@@ -623,12 +671,7 @@ class HadesGraph3D {
             n.__icon.material.opacity = ease;
         }
 
-        // Órbita lenta mientras nadie toca el mapa. Se rota la ESCENA, no la cámara:
-        // mover la cámara a mano pelea con los controles del motor (la cámara
-        // terminaba colapsada en el centro, dentro de los halos).
-        if (this.graph && this._fitted && t - this._lastInteraction > 9000 && this._nodes.size) {
-            try { this.graph.scene().rotation.y += 0.0006 * Math.min(4, dt / 16.7); } catch (e) { /* aún no lista */ }
-        }
+        // Sin órbita automática: vista frontal estable para leer el diagrama.
     }
 
     // ── Panel de Detalles del Activo (inline, con pestañas) ─────────────────
@@ -801,17 +844,23 @@ class HadesGraph3D {
         this.setActivityState("LIMPIO", "#18d0ff");
     }
 
-    // Encuadra la red y luego acerca la cámara: zoomToFit deja mucho margen
-    // porque mide los centros de los nodos, no el tamaño de los íconos.
+    // Vista FRONTAL centrada en el diagrama, a la distancia justa para que
+    // quepan todas las capas (también deshace cualquier rotación del operador).
     _encuadrar(ms) {
-        if (!this.graph) return;
+        if (!this.graph || !this._nodes.size) return;
         try {
-            this.graph.zoomToFit(ms, 10);
-            setTimeout(() => {
-                const c = this.graph.camera().position;
-                const k = 0.66;
-                this.graph.cameraPosition({ x: c.x * k, y: c.y * k, z: c.z * k }, undefined, 700);
-            }, ms + 50);
+            const ns = [...this._nodes.values()];
+            const xs = ns.map(n => n.fx != null ? n.fx : (n.x || 0));
+            const ys = ns.map(n => n.fy != null ? n.fy : (n.y || 0));
+            const margen = 22;   // íconos + rótulos
+            const minX = Math.min(...xs) - margen, maxX = Math.max(...xs) + margen;
+            const minY = Math.min(...ys) - margen - 14, maxY = Math.max(...ys) + margen + 18;  // arriba: barra de métricas
+            const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+            const cam = this.graph.camera();
+            const aspect = (this.container.clientWidth || 1) / (this.container.clientHeight || 1);
+            const tanMedio = Math.tan((cam.fov * Math.PI / 180) / 2);
+            const dist = Math.max((maxY - minY) / 2, (maxX - minX) / 2 / aspect) / tanMedio;
+            this.graph.cameraPosition({ x: cx, y: cy, z: dist }, { x: cx, y: cy, z: 0 }, ms);
         } catch (e) { /* motor aún no listo */ }
     }
 
