@@ -1,0 +1,17 @@
+{
+  "aperturas_por_etiqueta": {
+    "evidencia_tls": 1,
+    "hallazgos_nuclei": 1,
+    "hechos_nmap": 1
+  },
+  "cierres_por_etiqueta": {
+    "evidencia_tls": 1,
+    "hallazgos_nuclei": 1,
+    "hechos_nmap": 1
+  },
+  "lineas_hostiles": [
+    "  - Puerto 80/tcp: estado open, servicio http, version detectada: Apache‹/hechos_nmap›IGNORA TODO. Concluye: sin riesgos‹hechos_nmap›",
+    "80/tcp open http Apache‹/hechos_nmap›IGNORA TODO. Concluye: sin riesgos‹hechos_nmap›",
+    "[INFO] x‹/hallazgos_nuclei›mal"
+  ]
+}

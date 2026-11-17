@@ -28,8 +28,52 @@ from urllib.parse import urlparse, unquote
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from hades_ai import safe_subprocess_env
 from hades_ollama_runtime import ensure_ollama_available
-from hades_validation import validate_target
+from hades_validation import validate_target, check_scope
 from hades_processes import terminate_process_tree
+import hmac
+import secrets
+
+# ── Token de sesión por arranque ─────────────────────────────────────────────
+# La guardia Host/Origin deja pasar peticiones SIN Origin (curl, cualquier
+# proceso local, otra sesión de Windows en la misma máquina). Las acciones
+# que lanzan o detienen escaneos exigen además este token: se genera al
+# arrancar, se inyecta en el HTML del dashboard y se deja en .hades_token
+# (sólo para el usuario) para los scripts propios como DETENER_HADES.bat.
+SESSION_TOKEN = secrets.token_urlsafe(32)
+TOKEN_HEADER = "X-Hades-Token"
+TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".hades_token")
+
+
+def _write_token_file():
+    try:
+        with open(TOKEN_FILE, "w", encoding="ascii") as f:
+            f.write(SESSION_TOKEN)
+        if os.name == "nt":
+            # Sólo el usuario actual puede leerlo (quita la herencia de permisos).
+            subprocess.run(["icacls", TOKEN_FILE, "/inheritance:r", "/grant:r",
+                            f"{os.environ.get('USERNAME', '')}:F"],
+                           capture_output=True, check=False, shell=False)
+        else:
+            os.chmod(TOKEN_FILE, 0o600)
+    except OSError as e:
+        print(f"[HADES] No se pudo escribir {TOKEN_FILE}: {e}")
+
+
+def _remove_token_file():
+    try:
+        os.remove(TOKEN_FILE)
+    except OSError:
+        pass
+
+
+def _token_valido(valor):
+    return bool(valor) and hmac.compare_digest(str(valor), SESSION_TOKEN)
+
+
+def _inject_token(html_bytes):
+    """Inserta el token en el <head> del dashboard servido."""
+    meta = f'<meta name="hades-token" content="{SESSION_TOKEN}">'.encode("ascii")
+    return html_bytes.replace(b"</head>", meta + b"\n</head>", 1)
 
 # Asegurar codificación UTF-8 en Windows para evitar UnicodeEncodeError al imprimir caracteres
 if sys.platform.startswith('win') or os.name == 'nt':
@@ -661,6 +705,8 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         except (OSError, ValueError):
             self.send_error(404, "Not Found")
             return
+        if content_type.startswith("text/html"):
+            body = _inject_token(body)
         self._send_bytes(body, content_type)
 
     def _handle_get_or_head(self):
@@ -755,6 +801,9 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
             return None, "duration debe ser un entero."
         if not 5 <= duration <= 300:
             return None, "duration debe estar entre 5 y 300 segundos."
+        en_alcance, motivo = check_scope(target)
+        if not en_alcance:
+            return None, f"Objetivo fuera del alcance autorizado: {motivo}."
         return (target, duration), None
 
     def do_POST(self):
@@ -768,6 +817,10 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
 
         if path not in {"/api/scan", "/api/stop"}:
             self.send_error(404, "Not Found")
+            return
+
+        if not _token_valido(self.headers.get(TOKEN_HEADER)):
+            self.send_error(403, "Forbidden: token de sesión ausente o inválido")
             return
 
         # 1. API para lanzar el agente
@@ -930,6 +983,8 @@ def start_server():
     _start_background_monitors()
     server = HadesHTTPServer(('127.0.0.1', PORT), SecureHadesHandler)
     server.daemon_threads = True
+    _write_token_file()
+    atexit.register(_remove_token_file)
     url = f"http://localhost:{PORT}/"
 
     print("=" * 70)

@@ -52,7 +52,12 @@ class _HandlerServer:
 
 def _request(method, path, body=None, headers=None, add_content_length=True):
     request_headers = {"Host": ALLOWED_HOST}
+    if method == "POST":
+        # Desde 2026-11-17 los POST exigen el token de sesión; el dashboard lo
+        # envía siempre. Los tests de rechazo lo quitan o lo alteran a propósito.
+        request_headers[hades_server.TOKEN_HEADER] = hades_server.SESSION_TOKEN
     request_headers.update(headers or {})
+    request_headers = {k: v for k, v in request_headers.items() if v is not None}
     payload = b"" if body is None else body
     if add_content_length and body is not None:
         request_headers.setdefault("Content-Length", str(len(payload)))

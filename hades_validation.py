@@ -78,6 +78,83 @@ def validate_url(value):
     return url
 
 
+# ── Alcance autorizado ────────────────────────────────────────────────────────
+# Una herramienta de auditoría NO debe poder apuntar a Internet ni a rangos
+# gigantes por un error de tipeo. Por defecto sólo redes privadas; el operador
+# amplía el alcance acordado con HADES_ALCANCE="198.51.100.0/24,10.0.0.0/8".
+ALCANCE_POR_DEFECTO = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10",
+                       "127.0.0.0/8", "::1/128",
+                       "169.254.0.0/16", "fc00::/7", "fe80::/10")
+PREFIJO_MINIMO_IPV4 = 16
+PREFIJO_MINIMO_IPV6 = 64
+
+
+def _redes_autorizadas():
+    import os
+    valor = os.environ.get("HADES_ALCANCE", "").strip()
+    fuentes = [v.strip() for v in valor.split(",") if v.strip()] or list(ALCANCE_POR_DEFECTO)
+    redes = []
+    for v in fuentes:
+        try:
+            redes.append(ipaddress.ip_network(v, strict=False))
+        except ValueError:
+            continue
+    return redes
+
+
+def _red_en_alcance(red, redes):
+    return any(red.version == r.version and red.subnet_of(r) for r in redes)
+
+
+def check_scope(target, resolver=None):
+    """Devuelve (True, "") si el objetivo cae en el alcance autorizado, o
+    (False, motivo). `resolver(host) -> [ip, ...]` permite tests sin DNS."""
+    if target == "auto":
+        return True, ""
+    if validate_target(target) is None:
+        return False, "objetivo inválido"
+    redes = _redes_autorizadas()
+    try:
+        red = ipaddress.ip_network(target, strict=False)
+    except ValueError:
+        red = None
+    if red is not None:
+        minimo = PREFIJO_MINIMO_IPV4 if red.version == 4 else PREFIJO_MINIMO_IPV6
+        if red.prefixlen < minimo:
+            return False, f"rango demasiado amplio (/{red.prefixlen}; mínimo /{minimo})"
+        if not _red_en_alcance(red, redes):
+            return False, f"{target} fuera del alcance autorizado (HADES_ALCANCE)"
+        return True, ""
+    # Hostname: todas las IPs a las que resuelve deben estar en alcance.
+    if resolver is None:
+        import socket
+
+        def resolver(host):
+            return sorted({info[4][0] for info in socket.getaddrinfo(host, None)})
+    try:
+        ips = resolver(target)
+    except Exception:
+        return False, f"no se pudo resolver {target}"
+    if not ips:
+        return False, f"no se pudo resolver {target}"
+    fuera = [ip for ip in ips if not _red_en_alcance(ipaddress.ip_network(ip), redes)]
+    if fuera:
+        return False, f"{target} resuelve a {', '.join(fuera)}, fuera del alcance autorizado"
+    return True, ""
+
+
 def validate_target_or_url(value, cidr_ok=True):
     """Acepta una URL HTTP(S) o un objetivo de red validado."""
     return validate_url(value) or validate_target(value, cidr_ok=cidr_ok)
+
+
+def validate_in_scope(value, cidr_ok=True, allow_url=False):
+    """Objetivo (o URL) válido Y dentro del alcance autorizado; si no, ``None``."""
+    url = validate_url(value) if allow_url else None
+    if url is not None:
+        host = urlsplit(url).hostname
+        return url if check_scope(host)[0] else None
+    target = validate_target(value, cidr_ok=cidr_ok)
+    if target is None or target == "auto":
+        return None
+    return target if check_scope(target)[0] else None

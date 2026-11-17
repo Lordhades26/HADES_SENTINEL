@@ -9,7 +9,7 @@ from hades_ai import (
     safe_subprocess_env,
 )
 from hades_ollama_runtime import ensure_ollama_available
-from hades_validation import validate_target
+from hades_validation import validate_in_scope
 
 HADES_VERSION = "1.3.0"
 
@@ -17,7 +17,7 @@ HADES_VERSION = "1.3.0"
 # HADES_MODEL se importa desde hades_ai.py y permanece público por compatibilidad.
 
 def _safe_target(value):
-    return validate_target(value, cidr_ok=True)
+    return validate_in_scope(value, cidr_ok=True)
 
 # Compatibilidad con wrappers antiguos que emitían andamiaje interno.
 _SCAFFOLD_RE = re.compile(

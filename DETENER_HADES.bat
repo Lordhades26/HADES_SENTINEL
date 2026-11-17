@@ -23,7 +23,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='SilentlyContinue';" ^
   "$base = Split-Path -Parent '%~f0';" ^
   "Write-Host '[1/5] Parada elegante por /api/stop...' -ForegroundColor Cyan;" ^
-  "try { $r = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/stop' -Method POST -Body '{}' -ContentType 'application/json' -TimeoutSec 8; Write-Host ('      ' + $r.message) -ForegroundColor Green } catch { Write-Host '      sin respuesta (el agente ya estaba detenido)' -ForegroundColor DarkGray };" ^
+  "$h = @{}; $tf = Join-Path $base '.hades_token'; if (Test-Path $tf) { $h['X-Hades-Token'] = (Get-Content $tf -Raw).Trim() };" ^
+  "try { $r = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/stop' -Method POST -Body '{}' -ContentType 'application/json' -Headers $h -TimeoutSec 8; Write-Host ('      ' + $r.message) -ForegroundColor Green } catch { Write-Host '      sin respuesta o token rechazado (se sigue con la terminacion del proceso)' -ForegroundColor DarkGray };" ^
   "Start-Sleep -Seconds 2;" ^
   "Write-Host '[2/5] Terminando el proceso del dashboard (puerto 8080)...' -ForegroundColor Cyan;" ^
   "$pids = @(Get-NetTCPConnection -LocalPort 8080 -State Listen | Select-Object -ExpandProperty OwningProcess -Unique);" ^

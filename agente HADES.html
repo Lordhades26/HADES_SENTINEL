@@ -1872,7 +1872,8 @@ Esperando órdenes...</div>
                 const res = await fetch(`/api/scan`, {
                     method: "POST",
                     headers: {
-                        "Content-Type": "application/json"
+                        "Content-Type": "application/json",
+                        "X-Hades-Token": (document.querySelector("meta[name=hades-token]") || {}).content || ""
                     },
                     body: JSON.stringify({ target, duration })
                 });
@@ -1908,7 +1909,8 @@ Esperando órdenes...</div>
                 const res = await fetch(`/api/stop`, {
                     method: "POST",
                     headers: {
-                        "Content-Type": "application/json"
+                        "Content-Type": "application/json",
+                        "X-Hades-Token": (document.querySelector("meta[name=hades-token]") || {}).content || ""
                     },
                     body: JSON.stringify({})
                 });

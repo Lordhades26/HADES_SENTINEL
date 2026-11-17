@@ -88,9 +88,20 @@ def test_fn06_strip_scaffolding():
 
 
 def test_fn07_safe_target_accepts_valid():
-    """FN-07: objetivos legitimos (IP, host, CIDR) son aceptados."""
-    for t in ["127.0.0.1", "192.168.1.0/24", "router.local", "10.0.0.5"]:
-        assert local._safe_target(t) == t
+    """FN-07: objetivos legitimos (IP, host, CIDR) dentro del alcance son aceptados.
+
+    Desde el control de alcance (2026-11-17) un hostname se resuelve y su IP debe
+    estar en las redes autorizadas: aquí se simula el DNS para no depender de la red.
+    """
+    import socket
+    from unittest import mock
+    dns_falso = lambda host, *a, **k: [(socket.AF_INET, 0, 0, "", ("192.168.1.1", 0))]
+    with mock.patch("socket.getaddrinfo", dns_falso):
+        for t in ["127.0.0.1", "192.168.1.0/24", "router.local", "10.0.0.5"]:
+            assert local._safe_target(t) == t
+    # Fuera de alcance: IP pública y rango demasiado amplio.
+    for t in ["8.8.8.8", "10.0.0.0/8"]:
+        assert local._safe_target(t) is None
 
 
 # ===========================================================================

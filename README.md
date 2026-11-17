@@ -81,6 +81,28 @@ Estados de diagnóstico:
 Ninguno de estos estados cambia evidencia, severidad, riesgo ni el código de
 salida de la auditoría determinista.
 
+## Alcance, token y estados de las herramientas
+
+- **Alcance autorizado.** Por defecto sólo se escanean redes privadas
+  (RFC 1918, CGNAT 100.64/10, link-local, loopback y ULA IPv6) con un prefijo
+  mínimo /16 (IPv4) o /64 (IPv6). Para el alcance acordado con el titular de
+  la red: `HADES_ALCANCE="198.51.100.0/24,10.20.0.0/16"`. Los hostnames se
+  resuelven y todas sus IP deben quedar dentro. Aplica al dashboard, al motor,
+  al MCP y a `hades_local.py`.
+- **Token de sesión.** Cada arranque del dashboard genera un token que se
+  inyecta en la página y se guarda en `.hades_token` (sólo para el usuario).
+  `POST /api/scan` y `/api/stop` lo exigen en la cabecera `X-Hades-Token`;
+  `DETENER_HADES.bat` lo lee del archivo.
+- **Estados de herramientas.** Un error, corte por tiempo o salida ilegible
+  nunca se informa como «sin hallazgos»: Nuclei/TLS/Tshark quedan como
+  ERROR, TIMEOUT, PARCIAL, OMITIDO o «no concluyente», y un host cuyo Nmap
+  falló aparece con riesgo **NO EVALUADO**. Códigos de salida de la vigilancia:
+  0 completa, 1 algún host sin auditar, 2 descubrimiento fallido o sin Nmap.
+- **Variables con flags** (`HADES_DISCOVERY_*_FLAGS`, `HADES_NMAP_HOST_TIMEOUT`)
+  se validan: valores con `& | ; $ ( ) "` u otros metacaracteres se rechazan.
+- **Tests de aprobación:** `tests/approval.py` + `tests/approved/`. Si un
+  golden cambia, revisar el `.received.txt` y aprobar con `HADES_APPROVE=1`.
+
 ## Estructura del Proyecto
 ```bash
 HADES_SENTINEL/

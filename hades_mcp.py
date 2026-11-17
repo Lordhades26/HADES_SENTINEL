@@ -12,12 +12,13 @@ from hades_ai import (
     build_generate_payload,
     safe_subprocess_env,
 )
-from hades_validation import validate_target_or_url
+from hades_validation import validate_in_scope
 
 # HADES_MODEL y OLLAMA_URL se reexportan por compatibilidad.
 
 def _safe_target(value: str) -> Optional[str]:
-    return validate_target_or_url(value, cidr_ok=True)
+    # Un agente LLM decide el objetivo: además de válido, debe estar en alcance.
+    return validate_in_scope(value, cidr_ok=True, allow_url=True)
 
 # Common Windows paths for security tools
 WIN_PATHS = [

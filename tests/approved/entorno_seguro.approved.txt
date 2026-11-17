@@ -1,0 +1,28 @@
+{
+  "duraciones": {
+    " 10M ": "10m",
+    "1d": "<defecto>",
+    "1h": "1h",
+    "300": "300",
+    "300s": "300s",
+    "300s & calc": "<defecto>",
+    "5m": "5m",
+    "900ms": "900ms"
+  },
+  "flags": {
+    "": "<defecto>",
+    "-PS22,80,443": "-PS22,80,443",
+    "-sn \"x\"": "<defecto>",
+    "-sn $(calc)": "<defecto>",
+    "-sn & calc": "<defecto>",
+    "-sn -n -PE --min-rate 500 --host-timeout 20s": "-sn -n -PE --min-rate 500 --host-timeout 20s",
+    "-sn | whoami": "<defecto>"
+  },
+  "subproc_timeout": {
+    "1h": 4350,
+    "300s": 390,
+    "5m": 390,
+    "900ms": 60,
+    "basura": 390
+  }
+}
