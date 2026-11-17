@@ -1,14 +1,16 @@
 # HADES SENTINEL
-> Agente local de auditoría de red y compliance que transforma escaneos en tiempo real en informes ejecutivos profesionales alineados con la norma ISO/IEC 27001:2022 en un solo clic.
+> Agente de auditoría de red que ejecuta herramientas técnicas locales y convierte sus resultados en informes con ISO/IEC 27001:2022 como marco de referencia.
+
+HADES se ejecuta después del acuerdo y la autorización del titular de la red. El alcance operativo debe corresponder a lo pactado con el cliente. Nmap, Tshark, Nuclei y OpenSSL producen los resultados técnicos; la IA local aporta una interpretación consultiva y no sustituye la evidencia de esas herramientas ni la revisión del analista. La referencia a ISO/IEC 27001:2022 ayuda a relacionar hallazgos con controles, pero el escaneo no certifica el SGSI ni determina por sí solo su conformidad.
 
 ## Características
-- **Auditoría de Red 100% Local (On-Premise):** Ejecución íntegra en el dispositivo sin envío de datos a servidores externos, telemetría ni dependencias de APIs en la nube. Garantiza la confidencialidad absoluta de la topología de la red.
-- **Mapeo Automatizado a ISO/IEC 27001:2022:** Vincula de forma directa cada vulnerabilidad detectada y hallazgo técnico con los controles del Anexo A de la norma (A.5, A.8, etc.), agilizando el proceso de certificación y compliance.
+- **Auditoría de Red Local (On-Premise):** Las herramientas de escaneo y el modelo por defecto operan en el equipo. Antes de usar datos sensibles, debe verificarse la configuración efectiva del endpoint de IA y de las actualizaciones de plantillas.
+- **Referencia a ISO/IEC 27001:2022:** Relaciona hallazgos técnicos con controles del Anexo A para apoyar el análisis del cliente, sin afirmar conformidad automática.
 - **Pipeline de Escaneo Determinista de 5 Fases:**
   1. *Descubrimiento de Hosts (Adaptativo):* Barrido de hosts activos mediante Nmap que se ajusta al objetivo: ARP en la propia subred (capa 2, máxima fiabilidad) o sondas de capa 3 acotadas (ICMP echo/timestamp, TCP SYN/ACK y UDP a puertos comunes, con timing limitado) cuando el objetivo está enrutado tras un router.
   2. *Live Tshark Capture:* Captura de tráfico en tiempo real para análisis de flujos y protocolos.
-  3. *Nuclei Update:* Actualización automática y local de las firmas de vulnerabilidades.
-  4. *Auditoría Profunda:* Escaneo pormenorizado de puertos, banners de servicios, certificados SSL/TLS y CVEs.
+  3. *Nuclei Update:* Verificación de plantillas locales; si faltan, el agente intenta descargarlas, por lo que una instalación aislada debe incluirlas previamente.
+  4. *Auditoría Profunda:* Escaneo de puertos, versiones y certificados SSL/TLS; Nuclei evalúa los servicios web detectados con las plantillas disponibles. Los CVE se reportan sólo cuando constan en la evidencia de herramientas.
   5. *Consolidación de Informes:* Compilación automática del reporte técnico consolidado e informe ejecutivo.
 - **Generación de Reportes con Marca Blanca (White-Label):** Configuración de plantillas en formato Microsoft Word (`.docx`) altamente personalizables para añadir logotipos de clientes, colores corporativos primarios y secundarios, y pies de página comerciales.
 - **Dashboard Web Interactivo y Seguro:** Panel táctico en puerto `8080` que ofrece consola integrada, un mapa de red en 3D dinámico y monitores de rendimiento para el seguimiento del uso de CPU, GPU y RAM.

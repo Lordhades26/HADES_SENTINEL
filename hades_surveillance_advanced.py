@@ -190,10 +190,9 @@ class HadesSurveillance:
         # ══════════════════════════════════════════════════════════════════════
         log("FASE 1 — Descubrimiento de hosts (Nmap)...", "HADES")
         discovery_out = self.mcp.nmap_discovery(self.target_range)
-        active_ips = re.findall(
-            r"Nmap scan report for (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})",
-            discovery_out
-        )
+        # Nmap puede escribir "for 192.0.2.1" o "for host (192.0.2.1)".
+        # Ambas formas deben pasar a la auditoría profunda.
+        active_ips = parse_discovered_hosts(discovery_out)
 
         if not active_ips:
             log("Sin hosts activos. Verifica el rango de red.", "WARN")
@@ -384,6 +383,14 @@ class HadesSurveillance:
 
 # ─── FUNCIONES DE AUTODETECCIÓN DE RED ─────────────────────────────────────────
 import socket
+
+
+def parse_discovered_hosts(discovery_out):
+    """Extrae IPs de Nmap con o sin nombre DNS inverso."""
+    return list(dict.fromkeys(re.findall(
+        r"^Nmap scan report for (?:[^\r\n]*?\()?((?:\d{1,3}\.){3}\d{1,3})\)?\s*$",
+        discovery_out, re.MULTILINE
+    )))
 
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

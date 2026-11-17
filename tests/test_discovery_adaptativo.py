@@ -100,5 +100,43 @@ class TestPerfilDeDescubrimiento(unittest.TestCase):
         self.assertIn("inválido", out.lower())
 
 
+class TestEscaladoDelRango(unittest.TestCase):
+    """El timing del barrido L3 debe escalar con el tamaño: un /24 usa el perfil
+    base; un /16 sube rate y techo o Nmap no termina (bug 'el /16 no hace nada')."""
+
+    def test_rango_pequeno_usa_perfil_base(self):
+        flags, timeout = win._scaled_routed_discovery("10.77.140.0/24")
+        self.assertEqual(flags, win.DISCOVERY_ROUTED_FLAGS)
+        self.assertEqual(timeout, win.DISCOVERY_SUBPROC_TIMEOUT)
+
+    def test_rango_grande_sube_rate_y_techo(self):
+        import re
+        flags, timeout = win._scaled_routed_discovery("10.77.0.0/16")
+        mr = int(re.search(r"--min-rate\s+(\d+)", flags).group(1))
+        self.assertGreater(mr, 200)                                # rate > base
+        self.assertGreater(timeout, win.DISCOVERY_SUBPROC_TIMEOUT)  # techo > 600
+        self.assertLessEqual(timeout, 3600)                        # acotado a 1 h
+
+    def test_conteo_de_hosts(self):
+        self.assertEqual(win._target_host_count("10.77.0.0/16"), 65536)
+        self.assertEqual(win._target_host_count("10.77.140.0/24"), 256)
+        self.assertEqual(win._target_host_count("10.77.100.5"), 1)
+        self.assertEqual(win._target_host_count("no-es-cidr"), 1)
+
+    def test_discovery_enrutado_grande_pasa_timeout_escalado(self):
+        import re
+        capt = {}
+        def fake_execute(cmd, timeout=None):
+            capt["cmd"] = cmd; capt["timeout"] = timeout; return "Nmap done"
+        with mock.patch.object(win.os.path, "exists", return_value=True), \
+             mock.patch.object(win, "_target_is_onlink", return_value=False), \
+             mock.patch.object(win, "execute", side_effect=fake_execute):
+            win.HadesMCP().nmap_discovery("10.77.0.0/16")
+        self.assertGreater(capt["timeout"], win.DISCOVERY_SUBPROC_TIMEOUT)
+        self.assertIn("--min-rate", capt["cmd"])
+        mr = int(re.search(r"--min-rate\s+(\d+)", capt["cmd"]).group(1))
+        self.assertGreater(mr, 200)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
