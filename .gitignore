@@ -38,3 +38,6 @@ node_modules/
 
 # Tests de aprobación: salidas pendientes de revisar (no se versionan)
 tests/approved/*.received.txt
+
+# Token de sesión del dashboard (se genera en cada arranque; nunca versionar)
+.hades_token
