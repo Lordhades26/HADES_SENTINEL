@@ -30,7 +30,9 @@ const HADES_PROTO_STYLES = [
 ];
 const HADES_PROTO_DEFAULT = { color: "#ff5cd6", size: 1.9, label: "Otro TCP/UDP" };
 const HADES_PROBE = { color: "#ffd400", size: 1.6 };     // sondas del auditor
-const HADES_KEEPALIVE = { color: "#5f7d8c", size: 1.1 }; // ARP / keepalive de fondo
+const HADES_KEEPALIVE = { color: "#8fb8c8", size: 1.4 }; // ARP / keepalive de fondo
+// Estela del paquete: [retardo ms, tamaño relativo] de los destellos que lo siguen.
+const HADES_TRAIL = [[45, 0.62], [90, 0.36]];
 
 // Velocidades (fracción del enlace por cuadro): la WAN es más lenta que la LAN.
 const HADES_SPEED_LAN = 0.03;
@@ -140,7 +142,7 @@ class HadesGraph3D {
                 depthWrite: false, blending: THREE.AdditiveBlending,
             });
             const sp = new THREE.Sprite(mat);
-            const s = st.size * 2.4;
+            const s = st.size * 4.2;
             sp.scale.set(s, s, 1);
             return sp;
         } catch (e) {
@@ -244,10 +246,12 @@ class HadesGraph3D {
             .nodeThreeObject(n => this._nodeObject(n))
             .nodeThreeObjectExtend(false)
             // Enlaces dúplex finos y translúcidos: el protagonismo es de los paquetes.
-            .linkColor(l => l.kind === "wan" ? "rgba(255,92,214,0.32)" : "rgba(24,208,255,0.55)")
-            .linkWidth(l => l.kind === "wan" ? 0.35 : 0.55)
-            .linkOpacity(0.45)
-            .linkCurvature(0.14)
+            // El enlace de retorno (x → gateway) va superpuesto y transparente: sólo
+            // transporta los paquetes de respuesta por la misma línea.
+            .linkColor(l => l.__reverse ? "rgba(0,0,0,0)" : (l.kind === "wan" ? "rgba(255,92,214,0.75)" : "rgba(24,208,255,0.9)"))
+            .linkWidth(l => l.__reverse ? 0 : (l.kind === "wan" ? 1.1 : 1.8))
+            .linkOpacity(0.8)
+            .linkCurvature(0)                       // una sola línea recta por conexión
             .linkDirectionalParticles(0)            // sin partículas fijas: todo es emitido
             .linkDirectionalParticleSpeed(l => l.kind === "wan" ? HADES_SPEED_WAN : HADES_SPEED_LAN)
             .linkDirectionalParticleThreeObject(l => this._packetObject(l))
@@ -386,6 +390,8 @@ class HadesGraph3D {
             this._links.set(key, l);
         }
         l.kind = kind;
+        // Carril de retorno (nodo → gateway): invisible, comparte la línea de ida.
+        l.__reverse = b === this.routerId;
         return l;
     }
 
@@ -486,7 +492,7 @@ class HadesGraph3D {
         if (!this._fitted || count > (this._fittedCount || 0) * 1.5) {
             this._fitted = true;
             this._fittedCount = count;
-            setTimeout(() => { try { this.graph.zoomToFit(900, 20); } catch (e) {} }, 1600);
+            setTimeout(() => this._encuadrar(900), 1600);
         }
     }
 
@@ -498,7 +504,7 @@ class HadesGraph3D {
 
     // Emite un paquete que recorre `path` salto a salto (cada salto es un enlace).
     _send(path, style, onArrive) {
-        if (!this.graph || path.length < 2 || this._inFlight > 160) return;
+        if (!this.graph || path.length < 2 || this._inFlight > 260) return;
         const linkAt = i => this._links.get(this._linkKey(path[i], path[i + 1]));
         if (!linkAt(0)) return;
         this._inFlight++;
@@ -507,6 +513,12 @@ class HadesGraph3D {
             if (!link || !this._links.has(this._linkKey(path[i], path[i + 1]))) { this._inFlight--; return; }
             link.__pkt = style;
             try { this.graph.emitParticle(link); } catch (e) { this._inFlight--; return; }
+            // Estela tipo cometa: dos destellos menores detrás del paquete.
+            HADES_TRAIL.forEach(([ms, k]) => setTimeout(() => {
+                if (!this._links.has(this._linkKey(path[i], path[i + 1]))) return;
+                link.__pkt = Object.assign({}, style, { size: style.size * k });
+                try { this.graph.emitParticle(link); } catch (e) { /* enlace ya retirado */ }
+            }, ms));
             const dst = this._nodes.get(path[i + 1]);
             setTimeout(() => {
                 if (dst) this._pulse(dst, i + 1 === path.length - 1 ? 1 : 0.45);
@@ -546,7 +558,7 @@ class HadesGraph3D {
         // 1) Flujos reales capturados por Tshark: proceso de Poisson por flujo.
         for (const f of this._flows) {
             if (!this._nodes.has(f.src) || !this._nodes.has(f.dst)) continue;
-            const lambda = Math.min(1.8, 0.15 + Math.log2(1 + (f.count || 1)) * 0.3); // paquetes/s
+            const lambda = Math.min(3, 0.35 + Math.log2(1 + (f.count || 1)) * 0.45); // paquetes/s
             if (Math.random() < 1 - Math.exp(-lambda * dt)) {
                 const heavy = f.style.size >= 2.2;
                 const burst = heavy && Math.random() < 0.35 ? 2 + Math.floor(Math.random() * 3) : 1;
@@ -554,10 +566,18 @@ class HadesGraph3D {
             }
         }
 
-        // 2) Ruido de fondo: ARP/keepalive esporádico con hosts LAN.
+        // 2) Ruido de fondo: ARP/keepalive con hosts LAN y sesiones HTTPS leves
+        //    hacia IPs externas que no tienen un flujo propio capturado.
+        const conFlujo = new Set(this._flows.map(f => f.dst));
+        const origenes = [...new Set(this._flows.map(f => f.src))].filter(id => this._nodes.has(id));
         for (const n of this._nodes.values()) {
-            if (n.isRouter || n.isExternal) continue;
-            if (Math.random() < 0.006) this._exchange(this.routerId, n.id, HADES_KEEPALIVE);
+            if (n.isRouter) continue;
+            if (!n.isExternal) {
+                if (Math.random() < 0.012) this._exchange(this.routerId, n.id, HADES_KEEPALIVE);
+            } else if (!conFlujo.has(n.id) && Math.random() < 0.02) {
+                const src = origenes.length ? origenes[Math.floor(Math.random() * origenes.length)] : this.routerId;
+                this._exchange(src, n.id, HADES_PROTO_STYLES[0]);
+            }
         }
 
         // 3) Actividad del escáner.
@@ -781,9 +801,23 @@ class HadesGraph3D {
         this.setActivityState("LIMPIO", "#18d0ff");
     }
 
+    // Encuadra la red y luego acerca la cámara: zoomToFit deja mucho margen
+    // porque mide los centros de los nodos, no el tamaño de los íconos.
+    _encuadrar(ms) {
+        if (!this.graph) return;
+        try {
+            this.graph.zoomToFit(ms, 10);
+            setTimeout(() => {
+                const c = this.graph.camera().position;
+                const k = 0.66;
+                this.graph.cameraPosition({ x: c.x * k, y: c.y * k, z: c.z * k }, undefined, 700);
+            }, ms + 50);
+        } catch (e) { /* motor aún no listo */ }
+    }
+
     resetView() {
         this._lastInteraction = performance.now();
-        if (this.graph) { try { this.graph.zoomToFit(600, 60); } catch (e) {} }
+        this._encuadrar(600);
     }
 }
 
