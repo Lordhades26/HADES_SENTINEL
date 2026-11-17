@@ -119,6 +119,13 @@ _HADES_ENV_KEYS = (
     "HADES_AI_BACKOFF",
     "HADES_SKIP_AI",
     "HADES_NMAP_HOST_TIMEOUT",
+    # Sin estas, el dashboard aceptaba un alcance/config que el motor hijo no veía.
+    "HADES_ALCANCE",
+    "HADES_ASSET_PROFILE_TIMEOUT",
+    "HADES_SNMP_COMMUNITIES",
+    "HADES_DISCOVERY_ONLINK_FLAGS",
+    "HADES_DISCOVERY_ROUTED_FLAGS",
+    "HADES_DISCOVERY_TIMEOUT",
 )
 
 

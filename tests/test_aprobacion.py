@@ -457,6 +457,20 @@ class TestAprobacionPromptInjection(unittest.TestCase):
         })
 
 
+class TestEntornoDelMotorHijo(unittest.TestCase):
+
+    def test_variables_de_alcance_y_perfil_llegan_al_motor(self):
+        from hades_ai import safe_subprocess_env
+        origen = {"HADES_ALCANCE": "198.51.100.0/24", "HADES_SNMP_COMMUNITIES": "public",
+                  "HADES_ASSET_PROFILE_TIMEOUT": "90", "HADES_DISCOVERY_TIMEOUT": "1800",
+                  "OPENAI_API_KEY": "secreto", "PATH": "C:\\Windows"}
+        env = safe_subprocess_env(origen)
+        for clave in ("HADES_ALCANCE", "HADES_SNMP_COMMUNITIES",
+                      "HADES_ASSET_PROFILE_TIMEOUT", "HADES_DISCOVERY_TIMEOUT"):
+            self.assertEqual(env.get(clave), origen[clave])
+        self.assertNotIn("OPENAI_API_KEY", env, "los secretos no deben pasar al proceso hijo")
+
+
 class TestTokenDeSesion(unittest.TestCase):
     """Los POST que lanzan o detienen escaneos exigen X-Hades-Token."""
 

@@ -1507,7 +1507,14 @@ Esperando órdenes...</div>
 
             const line = document.createElement('div');
             line.className = 'lsw-line';
-            line.innerHTML = `<span class="lsw-icon">${icon}</span><span class="lsw-text ${cls}">${short}</span>`;
+            // textContent: los logs pueden traer texto de red (banners, PTR); nunca HTML.
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'lsw-icon';
+            iconSpan.textContent = icon;
+            const textSpan = document.createElement('span');
+            textSpan.className = `lsw-text ${cls}`.trim();
+            textSpan.textContent = short;
+            line.append(iconSpan, textSpan);
 
             lswBody.appendChild(line);
 
@@ -1775,7 +1782,7 @@ Esperando órdenes...</div>
 
         // Helper para agregar texto a la terminal
         function logToConsole(message) {
-            consoleLog.innerHTML += "\n" + message;
+            consoleLog.textContent += "\n" + message;  // texto plano: sin HTML de terceros
             consoleLog.scrollTop = consoleLog.scrollHeight;
             updateTimelineVisuals(message);
             // Alimentar widget de flujo en vivo y métricas IA
@@ -1920,7 +1927,7 @@ Esperando órdenes...</div>
                 // RESET A CERO: consola, mapa y línea de tiempo limpios para empezar de nuevo
                 if (data.reset) {
                     setTimeout(() => {
-                        consoleLog.innerHTML = ">>> Estado reiniciado a CERO. Listo para una nueva auditoría. Pulsa 'Iniciar' para escanear.";
+                        consoleLog.textContent = ">>> Estado reiniciado a CERO. Listo para una nueva auditoría. Pulsa 'Iniciar' para escanear.";
                         if (window.networkGraph) window.networkGraph.clear();
                         if (typeof resetTimelineToIdle === "function") resetTimelineToIdle();
                     }, 1500);

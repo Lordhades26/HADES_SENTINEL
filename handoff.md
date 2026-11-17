@@ -80,3 +80,25 @@ Mejorar HADES SENTINEL. En esta sesión: que la **Fase 1 de descubrimiento** fun
   4. Seguridad: `execute(shell=True)` + `HADES_*_FLAGS`/`HADES_NMAP_HOST_TIMEOUT` sin validar (inyección); lista blanca de alcance (hoy acepta IP públicas y 0.0.0.0/0); token por arranque `X-Hades-Token`; neutralizar `<`/`>` en evidencia hacia el prompt (LLM01); MCP con salida no confiable y `shutil.which`; consola con `textContent`; Ollama sólo loopback.
   5. M1 `_nmap_subproc_timeout` sin soporte de `h`; M3 IPs link-local/multicast contadas como Internet; M5 `safe_subprocess_env` sin `HADES_ASSET_PROFILE_TIMEOUT`/`HADES_SNMP_COMMUNITIES`; M6 `ollama serve` huérfano al fallar el arranque.
   6. Commit cuando el usuario lo pida (nunca push sin permiso).
+
+## Sesión 2026-11-17 (2ª parte) — pendientes de la revisión ECC cerrados — anexo
+- **Estado:** suite **108/108 pytest** y **100/100 `tests/run_all.py`**. Commits locales en `fix/fase4-ia-no-bloqueante` (SIN push): `7a72829` (trabajo pendiente del 16-10), `c1acb67` (Nuclei/execute/informe + tests de aprobación), `eaf0d51` (Tshark/descubrimiento/host con excepción), `ef2b08d` (alcance, token, flags del entorno, prompt injection) y el commit de cierre con este handoff.
+- **Hecho en esta parte:**
+  - Tshark: estado COMPLETA/PARCIAL/ERROR/OMITIDA (un fallo ya no es «0 paquetes»); IPs de Internet con `ipaddress` (sin multicast/link-local/broadcast/documentación).
+  - Descubrimiento: fallo de Nmap ≠ «sin hosts»; `run()` devuelve 2/1/0 y `main()` hace `sys.exit` (el dashboard ve el código real).
+  - Host con excepción: bloque `OBJETIVO:` + `[ERROR DE AUDITORÍA]`, conserva la evidencia parcial; ya no desaparece del DOCX.
+  - full_audit: Nuclei/TLS «OMITIDO» si Nmap no da resultado; `_resumen_tls` conserva errores de conexión.
+  - Seguridad: `check_scope` (redes privadas/loopback por defecto, /16 mínimo, `HADES_ALCANCE`) en dashboard, motor, MCP y local; token por arranque `X-Hades-Token` (HTML + `.hades_token`, DETENER_HADES.bat lo envía); flags `HADES_*` validados; `neutralizar_etiquetas` en prompts (LLM01); variables de alcance/perfil propagadas al motor hijo; consola y widget de logs con `textContent`.
+  - Verificación real por HTTP en puerto temporal 18080: token en HTML, 403 sin token/token falso, 200 con token, 400 fuera de alcance; servidor cerrado limpio.
+- **Intentos fallidos (se suman a la sección 4):**
+  - Heredoc de Bash colapsa `\n`/`\` en scripts Python embebidos: los reemplazos con asserts fallaron → usar la herramienta Edit para código con barras invertidas.
+  - `ipaddress.ip_address("224.0.0.251").is_global` es True: el multicast hay que excluirlo aparte.
+  - Tras exigir token, los tests de API previos daban 403: el helper `_request` de `test_produccion_p0_p1.py` ahora envía el token en POST (pasar `None` para quitarlo).
+  - Sin propagar `HADES_ALCANCE` en `safe_subprocess_env`, el servidor aceptaba un alcance ampliado que el motor hijo rechazaba.
+- **Próximos pasos:**
+  1. Probar el dashboard en el navegador real (iniciar escaneo y parada con el token; `DETENER_HADES.bat`).
+  2. MCP (`hades_mcp.py`): envolver la salida de herramientas como no confiable y acotada; rutas absolutas en vez de `shutil.which`; `run_tool` con prefijos `[ERROR]`/`[TIMEOUT]` (A5) y `quick_scan` de `hades_local.py` sin pedir IA sobre salida vacía.
+  3. Ollama sólo loopback salvo opción explícita (`HADES_OLLAMA_URL`/`OLLAMA_HOST`); M6 `ollama serve` huérfano al fallar el arranque.
+  4. Token también en GET sensibles (`/api/graph`, `/api/logs`); `chip.innerHTML` del dock (hoy títulos internos).
+  5. Decidir `AUDITORIA_CODIGO_2026-07-29.md` (borrado sin commit; el plan del 16-10 pide recuperarlo o documentarlo).
+  6. `git push` sólo cuando el usuario lo pida.
