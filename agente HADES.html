@@ -1313,9 +1313,9 @@ Esperando órdenes...</div>
 
     <!-- JavaScript del Ecosistema -->
     <script>
-        // El dashboard no maneja tokens de sesion: el backend autoriza por
-        // mismo origen (solo acepta peticiones nacidas de esta misma pagina en
-        // 127.0.0.1:8080). Las llamadas fetch de abajo van sin credenciales.
+        // Las lecturas (GET) se autorizan por mismo origen (127.0.0.1:8080).
+        // Las acciones (POST /api/scan y /api/stop) envían además el token de
+        // sesión que el servidor inyecta en <meta name="hades-token">.
 
         const consoleLog = document.getElementById("consoleLog");
         const statusDot = document.getElementById("statusDot");

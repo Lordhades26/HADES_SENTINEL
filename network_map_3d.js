@@ -1,19 +1,60 @@
 /* ============================================================================
  *  HADES — Mapa de Red 3D (Three.js / WebGL vía 3d-force-graph)
  *  Consume datos REALES del escaneo desde /api/graph y los visualiza como un
- *  grafo force-directed 3D estilo SOC: router central, hosts radiales coloreados
- *  por criticidad, partículas de flujo (paquetes) y panel lateral SOC al hacer
- *  clic. Mantiene la misma interfaz pública que el mapa anterior:
- *    init(), parseLogLine(msg), clear(), setActivityState(text,color), resetView()
+ *  grafo 3D estilo SOC con un modelo de tráfico realista:
+ *
+ *   • Topología estable: los nodos conservan su posición entre actualizaciones
+ *     (no se reconstruye el grafo); router fijo al centro, LAN en un anillo,
+ *     Internet en una capa exterior. Enlaces dúplex (carril de ida y de vuelta).
+ *   • Paquetes enrutados por saltos: host → gateway → Internet y la respuesta de
+ *     vuelta, con latencia distinta en LAN y WAN.
+ *   • Emisión estocástica (Poisson + ráfagas) proporcional al volumen capturado,
+ *     con color y tamaño según el protocolo.
+ *   • Nodos vivos: latido al recibir tráfico, aparición con fundido, alerta
+ *     pulsante en activos de riesgo alto; barrido de sondeo en el descubrimiento
+ *     y sondas sobre el host que se está auditando.
+ *   • Cámara en órbita lenta mientras el usuario no interactúa.
+ *
+ *  Interfaz pública (sin cambios): init(), parseLogLine(msg), clear(),
+ *  setActivityState(text,color), resetView()
  * ========================================================================== */
+
+// Estilo de paquete por protocolo (color, tamaño relativo, nombre para la leyenda).
+const HADES_PROTO_STYLES = [
+    { re: /^(TLS|SSL|HTTPS|QUIC)/i, ports: ["443", "8443", "993", "995", "465"], color: "#18d0ff", size: 2.4, label: "TLS / HTTPS" },
+    { re: /^HTTP/i, ports: ["80", "8080", "8000"], color: "#ff9f1a", size: 2.3, label: "HTTP" },
+    { re: /^(DNS|MDNS|LLMNR|NBNS)/i, ports: ["53", "5353", "5355", "137"], color: "#ffe14d", size: 1.5, label: "DNS / nombres" },
+    { re: /^(SSH|RDP|SMB|TELNET|FTP|VNC)/i, ports: ["22", "3389", "445", "139", "23", "21", "5900"], color: "#ff3355", size: 2.2, label: "Acceso remoto / SMB" },
+    { re: /^(ICMP|PING)/i, ports: [], color: "#ffffff", size: 1.4, label: "ICMP / sondeo" },
+    { re: /^(DHCP|SSDP|IGMP|ARP|NTP)/i, ports: ["67", "68", "1900", "123"], color: "#b04dff", size: 1.4, label: "Servicios de red" },
+];
+const HADES_PROTO_DEFAULT = { color: "#ff5cd6", size: 1.9, label: "Otro TCP/UDP" };
+const HADES_PROBE = { color: "#ffd400", size: 1.6 };     // sondas del auditor
+const HADES_KEEPALIVE = { color: "#5f7d8c", size: 1.1 }; // ARP / keepalive de fondo
+
+// Velocidades (fracción del enlace por cuadro): la WAN es más lenta que la LAN.
+const HADES_SPEED_LAN = 0.03;
+const HADES_SPEED_WAN = 0.016;
+
 class HadesGraph3D {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
         this.graph = null;
-        this.currentKey = "";          // huella del conjunto de hosts (para no relayoutear de más)
+        this.currentKey = "";          // huella de la topología (para no relayoutear de más)
         this.hostsById = {};           // ip -> datos del host (para el panel SOC)
         this.pollTimer = null;
         this.routerId = "GATEWAY";
+        this._nodes = new Map();       // id -> objeto nodo (se reutiliza: conserva posición)
+        this._links = new Map();       // "a->b" -> objeto enlace
+        this._flows = [];              // conexiones observadas por Tshark
+        this._frameMs = 16.7;          // duración media de cuadro (para cronometrar saltos)
+        this._inFlight = 0;            // paquetes en vuelo (tope de rendimiento)
+        this._lastInteraction = 0;
+        this._sweepIdx = 0;
+        this._mode = "idle";           // idle | discovery | audit
+        this._auditTarget = null;
+        this._fitted = false;
+        this._texCache = {};
         // Indicadores de estado (overlays existentes en el HTML)
         this.statusDotEl = document.getElementById("graphStatusDot");
         this.statusTextEl = document.getElementById("graphStatusText");
@@ -27,7 +68,8 @@ class HadesGraph3D {
         if (node.isRouter) return "#18d0ff";                 // azul = infraestructura crítica
         if (node.risk === "ALTO" || node.risk === "CRÍTICO") return "#ff0033"; // rojo = amenaza
         if (node.risk === "MEDIO") return "#ffd400";          // amarillo = sospechoso
-        if (node.status && node.status.indexOf("caído") === 0) return "#dddddd"; // blanco = inactivo/desconocido
+        if (node.risk === "NO EVALUADO") return "#b04dff";    // violeta = prueba no concluyente
+        if (node.status && node.status.indexOf("caído") === 0) return "#dddddd"; // blanco = inactivo
         if (node.device_type === "Desconocido") return "#dddddd";
         return "#39ff14";                                     // verde = estable/normal
     }
@@ -46,6 +88,19 @@ class HadesGraph3D {
         return "💻";  // host genérico / descubierto
     }
 
+    static protoStyle(proto, port) {
+        const p = String(proto || "");
+        const pt = String(port || "");
+        for (const s of HADES_PROTO_STYLES) {
+            if (s.re.test(p)) return s;
+        }
+        // Protocolo genérico (TCP/UDP): deducir por puerto conocido.
+        for (const s of HADES_PROTO_STYLES) {
+            if (s.ports.includes(pt)) return s;
+        }
+        return HADES_PROTO_DEFAULT;
+    }
+
     _roundRect(ctx, x, y, w, h, r) {
         ctx.beginPath();
         ctx.moveTo(x + r, y);
@@ -56,13 +111,53 @@ class HadesGraph3D {
         ctx.closePath();
     }
 
-    // Construye un sprite con el ícono del dispositivo y un borde según criticidad.
-    // Si THREE no está o algo falla, devuelve undefined → ForceGraph3D usa su esfera.
-    _iconSprite(node) {
+    // Textura de brillo radial (núcleo blanco → color → transparente), cacheada.
+    _glowTexture(color) {
+        if (this._texCache[color]) return this._texCache[color];
+        const S = 64;
+        const cv = document.createElement("canvas");
+        cv.width = cv.height = S;
+        const ctx = cv.getContext("2d");
+        const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+        g.addColorStop(0, "rgba(255,255,255,1)");
+        g.addColorStop(0.22, color);
+        g.addColorStop(0.55, color + "55");
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, S, S);
+        const tex = new THREE.CanvasTexture(cv);
+        this._texCache[color] = tex;
+        return tex;
+    }
+
+    // Objeto 3D de un paquete: destello aditivo del color de su protocolo.
+    _packetObject(link) {
+        try {
+            if (typeof THREE === "undefined") return undefined;
+            const st = link.__pkt || HADES_PROTO_DEFAULT;
+            const mat = new THREE.SpriteMaterial({
+                map: this._glowTexture(st.color), transparent: true,
+                depthWrite: false, blending: THREE.AdditiveBlending,
+            });
+            const sp = new THREE.Sprite(mat);
+            const s = st.size * 2.4;
+            sp.scale.set(s, s, 1);
+            return sp;
+        } catch (e) {
+            return undefined;
+        }
+    }
+
+    // Nodo = grupo con ícono del dispositivo + halo de actividad.
+    // Se cachea en el propio nodo y sólo se rehace si cambia ícono o color.
+    _nodeObject(node) {
         try {
             if (typeof THREE === "undefined" || !THREE.Sprite) return undefined;
             const emoji = HadesGraph3D.iconFor(node);
             const color = HadesGraph3D.color(node);
+            const key = emoji + color;
+            if (node.__obj && node.__objKey === key) return node.__obj;
+
             const S = 128;
             const cv = document.createElement("canvas");
             cv.width = cv.height = S;
@@ -78,10 +173,26 @@ class HadesGraph3D {
             ctx.fillText(emoji, S / 2, S / 2 + 4);
             const tex = new THREE.CanvasTexture(cv);
             tex.anisotropy = 4;
-            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
-            const scale = node.isRouter ? 17 : (node.isExternal ? 9 : 12);
-            sprite.scale.set(scale, scale, 1);
-            return sprite;
+            const icon = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+            const base = node.isRouter ? 17 : (node.isExternal ? 8 : 12);
+            icon.scale.set(base, base, 1);
+
+            const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: this._glowTexture(color), transparent: true, depthWrite: false,
+                blending: THREE.AdditiveBlending, opacity: 0.25,
+            }));
+            halo.scale.set(base * 2.2, base * 2.2, 1);
+
+            const group = new THREE.Group();
+            group.add(halo);
+            group.add(icon);
+            node.__obj = group;
+            node.__objKey = key;
+            node.__icon = icon;
+            node.__halo = halo;
+            node.__base = base;
+            if (node.__born == null) node.__born = performance.now();
+            return group;
         } catch (e) {
             return undefined;
         }
@@ -130,18 +241,30 @@ class HadesGraph3D {
             .nodeVal(n => n.isRouter ? 26 : (n.isExternal ? 4 : (5 + (n.ports ? n.ports.length : 0) * 3)))
             .nodeOpacity(0.92)
             .nodeResolution(14)
-            .nodeThreeObject(n => this._iconSprite(n))
+            .nodeThreeObject(n => this._nodeObject(n))
             .nodeThreeObjectExtend(false)
-            .linkColor(l => l.kind === "traffic" ? "rgba(255,60,190,0.8)" : "rgba(0,225,255,0.8)")
-            .linkWidth(l => l.kind === "traffic" ? 1.2 : 2.0)
-            .linkOpacity(0.75)
-            .linkDirectionalParticles(l => (l.particles || 3))
-            .linkDirectionalParticleSpeed(l => l.kind === "traffic" ? 0.02 : 0.012)
-            .linkDirectionalParticleWidth(l => l.kind === "traffic" ? 2.5 : 4)
-            .linkDirectionalParticleColor(l => l.kind === "traffic" ? "#ff80d0" : "#5dff8f")
-            .linkDirectionalParticleResolution(6)
-            .cooldownTime(8000)
+            // Enlaces dúplex finos y translúcidos: el protagonismo es de los paquetes.
+            .linkColor(l => l.kind === "wan" ? "rgba(255,92,214,0.32)" : "rgba(24,208,255,0.55)")
+            .linkWidth(l => l.kind === "wan" ? 0.35 : 0.55)
+            .linkOpacity(0.45)
+            .linkCurvature(0.14)
+            .linkDirectionalParticles(0)            // sin partículas fijas: todo es emitido
+            .linkDirectionalParticleSpeed(l => l.kind === "wan" ? HADES_SPEED_WAN : HADES_SPEED_LAN)
+            .linkDirectionalParticleThreeObject(l => this._packetObject(l))
+            .d3AlphaDecay(0.03)
+            .d3VelocityDecay(0.38)
+            .warmupTicks(30)
+            .cooldownTime(6000)
             .onNodeClick(n => this.openPanel(n))
+            .onNodeDrag(() => { this._lastInteraction = performance.now(); })
+            .onNodeDragEnd(n => {
+                // El motor fija el nodo donde se suelta. El router vuelve siempre al
+                // centro (ancla de la topología); el resto se libera y la física lo
+                // reacomoda, como un enlace elástico.
+                if (n.isRouter) { n.fx = 0; n.fy = 0; n.fz = 0; }
+                else { n.fx = undefined; n.fy = undefined; n.fz = undefined; }
+                this.graph.d3ReheatSimulation();
+            })
             .onBackgroundClick(() => this.closePanel());
         } catch (err) {
             this.container.innerHTML = '<div style="padding:16px;color:#ff6a00;font-family:monospace;font-size:12px">' +
@@ -150,9 +273,16 @@ class HadesGraph3D {
             return;
         }
 
+        this._setupForces();
+
         // Tamaño inicial y resize
         this._resize();
         window.addEventListener("resize", () => this._resize());
+
+        // La órbita automática se pausa mientras el usuario manipula el mapa.
+        const touch = () => { this._lastInteraction = performance.now(); };
+        ["pointerdown", "wheel", "touchstart"].forEach(ev =>
+            this.container.addEventListener(ev, touch, { passive: true }));
 
         // Botones existentes
         const rb = document.getElementById("btnResetGraph");
@@ -160,14 +290,52 @@ class HadesGraph3D {
         if (rb) rb.addEventListener("click", () => this.resetView());
         if (cb) cb.addEventListener("click", () => this.clear());
 
-        // Crear panel lateral SOC y barra de mini-dashboards
+        // Crear panel lateral SOC, barra de mini-dashboards y leyenda de protocolos
         this._buildPanel();
         this._buildStatsBar();
+        this._buildLegend();
+
+        // Bucles de animación: cuadros (pulsos, cámara) y emisor de paquetes.
+        this._lastFrame = performance.now();
+        this._lastInteraction = performance.now();   // la órbita espera ~9 s tras cargar
+        const frame = (t) => { this._onFrame(t); this._raf = requestAnimationFrame(frame); };
+        this._raf = requestAnimationFrame(frame);
+        this._trafficTimer = setInterval(() => this._trafficTick(0.1), 100);
 
         // Primera carga + polling de datos reales
         this.refresh();
         this.pollTimer = setInterval(() => this.refresh(), 4000);
         this.setActivityState("EN ESPERA", "#18d0ff");
+    }
+
+    // Fuerzas: router anclado, LAN en anillo interior, Internet en capa exterior.
+    _setupForces() {
+        try {
+            const charge = this.graph.d3Force("charge");
+            if (charge && charge.strength) {
+                charge.strength(n => n.isRouter ? -320 : (n.isExternal ? -35 : -140));
+            }
+            const link = this.graph.d3Force("link");
+            if (link && link.distance) {
+                link.distance(l => l.kind === "wan" ? 120 : 62).strength(l => l.kind === "wan" ? 0.25 : 0.55);
+            }
+            // Fuerza radial propia (sin depender de d3 externo).
+            let nodes = [];
+            const radial = (alpha) => {
+                for (const n of nodes) {
+                    if (n.isRouter) continue;
+                    const r = n.isExternal ? 230 : 80;
+                    const x = n.x || 0, y = n.y || 0, z = n.z || 0;
+                    const d = Math.sqrt(x * x + y * y + z * z) || 1;
+                    const k = ((r - d) / d) * alpha * 0.09;
+                    n.vx += x * k; n.vy += y * k * 0.6; n.vz += z * k;
+                }
+            };
+            radial.initialize = (ns) => { nodes = ns; };
+            this.graph.d3Force("radial", radial);
+        } catch (e) {
+            console.warn("[HadesGraph3D] fuerzas personalizadas no disponibles:", e);
+        }
     }
 
     _resize() {
@@ -179,8 +347,7 @@ class HadesGraph3D {
     // ── Carga de datos reales desde /api/graph ──────────────────────────────
     async refresh() {
         try {
-            // Sin token: el backend autoriza por mismo origen (esta pagina en
-            // 127.0.0.1:8080). El fetch va tal cual, sin credenciales.
+            // GET de sólo lectura: el backend lo autoriza por mismo origen.
             const res = await fetch(`/api/graph`);
             if (!res.ok) return;
             const data = await res.json();
@@ -188,12 +355,45 @@ class HadesGraph3D {
         } catch (e) { /* el polling reintenta */ }
     }
 
+    // Obtiene (o crea) el nodo con id dado conservando su posición previa.
+    _upsertNode(id, props, anchorId) {
+        let n = this._nodes.get(id);
+        if (!n) {
+            n = { id };
+            // Nace junto a su ancla (gateway u origen) para que entre «desde» la red.
+            const a = this._nodes.get(anchorId);
+            const j = () => (Math.random() - 0.5) * 12;
+            if (a && a.x != null) { n.x = a.x + j(); n.y = a.y + j(); n.z = a.z + j(); }
+            n.__born = performance.now();
+            this._nodes.set(id, n);
+        }
+        // Actualiza datos sin tocar x/y/z/vx/vy/vz ni la caché del objeto 3D.
+        Object.keys(n).forEach(k => {
+            if (!k.startsWith("__") && !["id", "x", "y", "z", "vx", "vy", "vz", "fx", "fy", "fz", "index"].includes(k)
+                && !(k in props)) delete n[k];
+        });
+        Object.assign(n, props);
+        return n;
+    }
+
+    _linkKey(a, b) { return a + "->" + b; }
+
+    _upsertLink(a, b, kind) {
+        const key = this._linkKey(a, b);
+        let l = this._links.get(key);
+        if (!l) {
+            l = { source: a, target: b, kind };
+            this._links.set(key, l);
+        }
+        l.kind = kind;
+        return l;
+    }
+
     _apply(data) {
         if (!data || data.status !== "ok") return;
         const hosts = data.hosts || [];
         const externals = data.externals || [];
         const connections = data.connections || [];
-        this.routerId = data.router_ip || "GATEWAY";
         this._hostnames = data.hostnames || {};   // PTR (dominio) de IPs externas; se resuelve en vivo
 
         // Indexar hosts (LAN) para el panel de detalles
@@ -211,65 +411,204 @@ class HadesGraph3D {
         if (this.subnetEl && data.subnet) this.subnetEl.textContent = data.subnet;
         this._updateStats(data.stats || {});
 
-        // Huella: incluye hosts, externos y nº de conexiones (para redibujar en vivo
-        // a medida que el escaneo detecta nuevos elementos).
+        // Los flujos se actualizan siempre (no requieren relayout).
+        this._flows = connections.map(cn => Object.assign({}, cn, {
+            style: HadesGraph3D.protoStyle(cn.proto, cn.port),
+        }));
+
+        // Huella de la topología: sólo se re-entrega el grafo si cambian nodos/enlaces.
         const key = hosts.map(h => h.ip + ":" + h.risk + ":" + (h.ports ? h.ports.length : 0)).sort().join("|")
-            + "#E" + externals.slice().sort().join(",") + "#C" + connections.length;
+            + "#E" + externals.slice().sort().join(",")
+            + "#C" + connections.map(c => c.src + ">" + c.dst).sort().join(",");
         if (key === this.currentKey) return;
         this.currentKey = key;
 
-        const nodes = [];
-        const links = [];
-        const seen = new Set();
+        const wantNodes = new Set();
+        const wantLinks = new Set();
 
-        // Router central
-        if (!hosts.some(h => h.ip === this.routerId)) {
-            nodes.push({ id: "GATEWAY", ip: data.subnet || "Gateway", isRouter: true,
-                         device_type: "Router / Gateway", risk: "INFORMATIVO", ports: [] });
-            this.routerId = "GATEWAY";
-            seen.add("GATEWAY");
+        // Router central (fijo en el origen)
+        let routerId = data.router_ip && hosts.some(h => h.ip === data.router_ip) ? data.router_ip : "GATEWAY";
+        if (routerId === "GATEWAY") {
+            this._upsertNode("GATEWAY", { ip: data.subnet || "Gateway", isRouter: true,
+                device_type: "Router / Gateway", risk: "INFORMATIVO", ports: [] });
+            wantNodes.add("GATEWAY");
         }
-        // Hosts internos de la LAN
+        this.routerId = routerId;
+
+        // Hosts internos de la LAN, cada uno con enlace dúplex al gateway.
         hosts.forEach(h => {
-            const isR = h.ip === this.routerId;
-            nodes.push(Object.assign({ id: h.ip, isRouter: isR }, h));
-            seen.add(h.ip);
+            const isR = h.ip === routerId;
+            this._upsertNode(h.ip, Object.assign({ isRouter: isR }, h), routerId);
+            wantNodes.add(h.ip);
             if (!isR) {
-                const ports = h.ports ? h.ports.length : 0;
-                links.push({ source: this.routerId, target: h.ip, kind: "lan",
-                             particles: Math.min(6, 2 + ports) });
-            }
-        });
-        // Nodos externos (Internet): TODAS las IPs externas + destinos de conexiones
-        const extSet = new Set(externals);
-        connections.forEach(cn => extSet.add(cn.dst));
-        extSet.forEach(ip => {
-            if (!seen.has(ip)) {
-                nodes.push({ id: ip, ip: ip, isExternal: true,
-                             device_type: "Internet (externo)", risk: "INFORMATIVO", ports: [] });
-                seen.add(ip);
-            }
-        });
-        // Enlaces de tráfico (host LAN → destino), con partículas según volumen
-        const connectedDst = new Set(connections.map(cn => cn.dst));
-        connections.forEach(cn => {
-            if (seen.has(cn.src) && seen.has(cn.dst)) {
-                links.push({ source: cn.src, target: cn.dst, kind: "traffic",
-                             proto: cn.proto, port: cn.port,
-                             particles: Math.min(8, Math.ceil(cn.count / 3)) });
-            }
-        });
-        // Anclar TODA IP externa que no tenga tráfico directo a un host: se enlaza al
-        // router (el tráfico a Internet sale por el gateway). Evita nodos flotantes
-        // sueltos que se salían de vista → así se ven TODAS las externas.
-        extSet.forEach(ip => {
-            if (seen.has(ip) && !connectedDst.has(ip)) {
-                links.push({ source: this.routerId, target: ip, kind: "traffic", particles: 2 });
+                wantLinks.add(this._linkKey(routerId, h.ip));
+                wantLinks.add(this._linkKey(h.ip, routerId));
+                this._upsertLink(routerId, h.ip, "lan");
+                this._upsertLink(h.ip, routerId, "lan");
             }
         });
 
+        // Internet: toda IP externa cuelga del gateway (el tráfico sale por él).
+        const extSet = new Set(externals);
+        connections.forEach(cn => {
+            if (!this.hostsById[cn.dst]) extSet.add(cn.dst);
+            if (!this.hostsById[cn.src] && cn.src !== routerId) extSet.add(cn.src);
+        });
+        extSet.forEach(ip => {
+            if (wantNodes.has(ip)) return;
+            this._upsertNode(ip, { ip, isExternal: true, device_type: "Internet (externo)",
+                risk: "INFORMATIVO", ports: [] }, routerId);
+            wantNodes.add(ip);
+            wantLinks.add(this._linkKey(routerId, ip));
+            wantLinks.add(this._linkKey(ip, routerId));
+            this._upsertLink(routerId, ip, "wan");
+            this._upsertLink(ip, routerId, "wan");
+        });
+
+        // Quitar lo que ya no existe
+        [...this._nodes.keys()].forEach(id => { if (!wantNodes.has(id)) this._nodes.delete(id); });
+        [...this._links.keys()].forEach(k => { if (!wantLinks.has(k)) this._links.delete(k); });
+
+        const router = this._nodes.get(routerId);
+        if (router) { router.fx = 0; router.fy = 0; router.fz = 0; }
+
+        const nodes = [...this._nodes.values()];
+        // Los enlaces se entregan con ids: la librería los resuelve a los mismos objetos nodo.
+        const links = [...this._links.values()].map(l => {
+            l.source = typeof l.source === "object" ? l.source.id : l.source;
+            l.target = typeof l.target === "object" ? l.target.id : l.target;
+            return l;
+        });
         this.graph.graphData({ nodes, links });
-        setTimeout(() => { try { this.graph.zoomToFit(500, 50); } catch (e) {} }, 600);
+
+        // Encuadre sólo la primera vez o si la red creció mucho (no marea al usuario).
+        const count = nodes.length;
+        if (!this._fitted || count > (this._fittedCount || 0) * 1.5) {
+            this._fitted = true;
+            this._fittedCount = count;
+            setTimeout(() => { try { this.graph.zoomToFit(900, 20); } catch (e) {} }, 1600);
+        }
+    }
+
+    // ── Motor de tráfico ────────────────────────────────────────────────────
+    _hopMs(link) {
+        const speed = link.kind === "wan" ? HADES_SPEED_WAN : HADES_SPEED_LAN;
+        return (1 / speed) * this._frameMs;
+    }
+
+    // Emite un paquete que recorre `path` salto a salto (cada salto es un enlace).
+    _send(path, style, onArrive) {
+        if (!this.graph || path.length < 2 || this._inFlight > 160) return;
+        const linkAt = i => this._links.get(this._linkKey(path[i], path[i + 1]));
+        if (!linkAt(0)) return;
+        this._inFlight++;
+        const hop = (i) => {
+            const link = linkAt(i);
+            if (!link || !this._links.has(this._linkKey(path[i], path[i + 1]))) { this._inFlight--; return; }
+            link.__pkt = style;
+            try { this.graph.emitParticle(link); } catch (e) { this._inFlight--; return; }
+            const dst = this._nodes.get(path[i + 1]);
+            setTimeout(() => {
+                if (dst) this._pulse(dst, i + 1 === path.length - 1 ? 1 : 0.45);
+                if (i + 2 < path.length) hop(i + 1);
+                else { this._inFlight--; if (onArrive) onArrive(); }
+            }, this._hopMs(link));
+        };
+        hop(0);
+    }
+
+    // Ruta realista: todo pasa por el gateway (salvo que un extremo sea el gateway).
+    _route(src, dst) {
+        const R = this.routerId;
+        if (src === R || dst === R) return [src, dst];
+        return [src, R, dst];
+    }
+
+    // Petición y respuesta (la respuesta llega tras la latencia del servidor).
+    _exchange(src, dst, style, burst = 1) {
+        const path = this._route(src, dst);
+        const external = this._nodes.get(dst) && this._nodes.get(dst).isExternal;
+        const think = external ? 220 + Math.random() * 380 : 40 + Math.random() * 120;
+        for (let b = 0; b < burst; b++) {
+            setTimeout(() => {
+                this._send(path, style, () => {
+                    // Las respuestas de TLS/HTTP suelen ser más pesadas (descarga).
+                    const resp = style.size >= 2.2 ? Object.assign({}, style, { size: style.size * 1.25 }) : style;
+                    setTimeout(() => this._send(path.slice().reverse(), resp), think);
+                });
+            }, b * (55 + Math.random() * 40));
+        }
+    }
+
+    _trafficTick(dt) {
+        if (!this.graph || document.hidden) return;
+
+        // 1) Flujos reales capturados por Tshark: proceso de Poisson por flujo.
+        for (const f of this._flows) {
+            if (!this._nodes.has(f.src) || !this._nodes.has(f.dst)) continue;
+            const lambda = Math.min(1.8, 0.15 + Math.log2(1 + (f.count || 1)) * 0.3); // paquetes/s
+            if (Math.random() < 1 - Math.exp(-lambda * dt)) {
+                const heavy = f.style.size >= 2.2;
+                const burst = heavy && Math.random() < 0.35 ? 2 + Math.floor(Math.random() * 3) : 1;
+                this._exchange(f.src, f.dst, f.style, burst);
+            }
+        }
+
+        // 2) Ruido de fondo: ARP/keepalive esporádico con hosts LAN.
+        for (const n of this._nodes.values()) {
+            if (n.isRouter || n.isExternal) continue;
+            if (Math.random() < 0.006) this._exchange(this.routerId, n.id, HADES_KEEPALIVE);
+        }
+
+        // 3) Actividad del escáner.
+        const lan = [...this._nodes.values()].filter(n => !n.isRouter && !n.isExternal);
+        if (this._mode === "discovery" && lan.length) {
+            // Barrido de sondeo: un eco ICMP por host en orden, como un ping sweep.
+            const n = lan[this._sweepIdx++ % lan.length];
+            const st = HadesGraph3D.protoStyle("ICMP");
+            this._send([this.routerId, n.id], st, () => {
+                if (Math.random() < 0.85) setTimeout(() => this._send([n.id, this.routerId], st), 60);
+            });
+        } else if (this._mode === "audit" && this._auditTarget && this._nodes.has(this._auditTarget)) {
+            // Sondas del auditor sobre el host objetivo (SYN → SYN/ACK|RST).
+            if (Math.random() < 0.55) this._exchange(this.routerId, this._auditTarget, HADES_PROBE,
+                1 + Math.floor(Math.random() * 3));
+        }
+    }
+
+    _pulse(node, amount) {
+        node.__pulse = Math.min(1.4, (node.__pulse || 0) + amount);
+    }
+
+    // ── Cuadro a cuadro: pulsos, apariciones, alertas y cámara ──────────────
+    _onFrame(t) {
+        const dt = t - this._lastFrame;
+        this._lastFrame = t;
+        if (dt > 0 && dt < 250) this._frameMs = this._frameMs * 0.95 + dt * 0.05;
+
+        for (const n of this._nodes.values()) {
+            if (!n.__icon) continue;
+            const age = Math.min(1, (t - (n.__born || 0)) / 900);       // aparición 0→1
+            const ease = 1 - Math.pow(1 - age, 3);
+            n.__pulse = (n.__pulse || 0) * Math.pow(0.9, dt / 16.7);
+            const alert = n.risk === "CRÍTICO" || n.risk === "ALTO";
+            const breathe = n.isRouter ? 0.12 * (1 + Math.sin(t / 900)) :
+                (alert ? 0.35 * (1 + Math.sin(t / 260)) : 0);
+            const isTarget = this._mode === "audit" && n.id === this._auditTarget;
+            const s = n.__base * ease * (1 + 0.16 * n.__pulse + (isTarget ? 0.12 * (1 + Math.sin(t / 140)) : 0));
+            n.__icon.scale.set(s, s, 1);
+            const hs = n.__base * ease * (2.0 + 1.1 * n.__pulse + breathe + (isTarget ? 0.8 : 0));
+            n.__halo.scale.set(hs, hs, 1);
+            n.__halo.material.opacity = Math.min(0.95, 0.18 + 0.55 * n.__pulse + breathe * 0.6 + (isTarget ? 0.35 : 0));
+            n.__icon.material.opacity = ease;
+        }
+
+        // Órbita lenta mientras nadie toca el mapa. Se rota la ESCENA, no la cámara:
+        // mover la cámara a mano pelea con los controles del motor (la cámara
+        // terminaba colapsada en el centro, dentro de los halos).
+        if (this.graph && this._fitted && t - this._lastInteraction > 9000 && this._nodes.size) {
+            try { this.graph.scene().rotation.y += 0.0006 * Math.min(4, dt / 16.7); } catch (e) { /* aún no lista */ }
+        }
     }
 
     // ── Panel de Detalles del Activo (inline, con pestañas) ─────────────────
@@ -289,6 +628,7 @@ class HadesGraph3D {
         this.selectedHost = this.hostsById[node.ip] || node;
         const ipEl = document.getElementById("hostDetailIp");
         if (ipEl) ipEl.textContent = this.selectedHost.ip || "";
+        this._pulse(node, 1);
         this._renderHostDetail();
     }
 
@@ -366,6 +706,23 @@ class HadesGraph3D {
         if (wrap) wrap.appendChild(bar);
     }
 
+    // Leyenda: qué significa cada color de paquete.
+    _buildLegend() {
+        if (document.getElementById("graphProtoLegend")) return;
+        const box = document.createElement("div");
+        box.id = "graphProtoLegend";
+        box.style.cssText = "position:absolute;bottom:8px;right:8px;z-index:5;pointer-events:none;" +
+            "background:rgba(0,0,0,.72);border:1px solid rgba(24,208,255,.25);border-radius:4px;" +
+            "padding:4px 8px;font-family:monospace;font-size:0.62rem;color:#9fc3cf;line-height:1.5";
+        const items = HADES_PROTO_STYLES.concat([HADES_PROTO_DEFAULT,
+            Object.assign({ label: "Sondas del auditor" }, HADES_PROBE)]);
+        box.innerHTML = items.map(s =>
+            `<div><span style="display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;` +
+            `background:${s.color};box-shadow:0 0 6px ${s.color}"></span>${s.label}</div>`).join("");
+        const wrap = this.container.parentElement;
+        if (wrap) wrap.appendChild(box);
+    }
+
     _updateStats(stats) {
         const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
         if (!stats || !stats.riesgo) return;
@@ -386,12 +743,22 @@ class HadesGraph3D {
     // ── Interfaz pública (compatibilidad con el dashboard) ──────────────────
     parseLogLine(msg) {
         const m = (msg || "").toLowerCase();
-        if (m.includes("fase 1") || m.includes("descubrimiento")) { this.setActivityState("DESCUBRIENDO", "#18d0ff"); this.refresh(); }
-        else if (m.includes("fase 2") || m.includes("captura") || m.includes("tshark") || m.includes("tráfico")) { this.setActivityState("CAPTURANDO", "#18d0ff"); this.refresh(); }
+        const auditado = (msg || "").match(/auditor[ií]a completa\s*(?:→|->)\s*([0-9a-f.:]+)/i);
+        if (auditado) {
+            this._mode = "audit";
+            this._auditTarget = auditado[1];
+            this.setActivityState("ANALIZANDO " + auditado[1], "#ffd400");
+            return;
+        }
+        if (m.includes("fase 1") || m.includes("descubrimiento")) { this._mode = "discovery"; this.setActivityState("DESCUBRIENDO", "#18d0ff"); this.refresh(); }
+        else if (m.includes("fase 2") || m.includes("captura") || m.includes("tshark") || m.includes("tráfico")) { this._mode = "idle"; this.setActivityState("CAPTURANDO", "#18d0ff"); this.refresh(); }
         else if (m.includes("fase 4") || m.includes("auditoria") || m.includes("auditoría")) this.setActivityState("ANALIZANDO", "#ffd400");
-        else if (m.includes("host") && m.includes("auditado")) this.refresh();
+        else if (m.includes("host") && m.includes("auditado")) { this._auditTarget = null; this.refresh(); }
         else if (m.includes("vuln") || m.includes("critical") || m.includes("cve-")) this.setActivityState("⚠ VULN", "#ff0033");
-        else if (m.includes("agente finalizado") || (m.includes("vigilancia") && m.includes("completada"))) { this.setActivityState("COMPLETADO", "#39ff14"); this.refresh(); }
+        else if (m.includes("agente finalizado") || (m.includes("vigilancia") && m.includes("completada"))) {
+            this._mode = "idle"; this._auditTarget = null;
+            this.setActivityState("COMPLETADO", "#39ff14"); this.refresh();
+        }
         else if (m.includes("escaneo iniciado") || m.includes("lanzando")) this.setActivityState("ESCANEANDO", "#18d0ff");
     }
 
@@ -403,12 +770,19 @@ class HadesGraph3D {
     clear() {
         this.currentKey = "";
         this.hostsById = {};
+        this._nodes.clear();
+        this._links.clear();
+        this._flows = [];
+        this._mode = "idle";
+        this._auditTarget = null;
+        this._fitted = false;
         if (this.graph) this.graph.graphData({ nodes: [], links: [] });
         if (this.hostsCountEl) this.hostsCountEl.textContent = "0";
         this.setActivityState("LIMPIO", "#18d0ff");
     }
 
     resetView() {
+        this._lastInteraction = performance.now();
         if (this.graph) { try { this.graph.zoomToFit(600, 60); } catch (e) {} }
     }
 }
