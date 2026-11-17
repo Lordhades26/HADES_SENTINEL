@@ -1,0 +1,9 @@
+{
+  "": "",
+  "<img src=x onerror=alert(1)>": "",
+  "None": "",
+  "a\"onmouseover=\"x": "",
+  "con espacios.example": "",
+  "intranet-01.local": "intranet-01.local",
+  "router.example.": "router.example"
+}

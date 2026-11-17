@@ -115,12 +115,16 @@ class HadesGraph3D {
             .showNavInfo(false)
             .nodeId("id")
             .nodeLabel(n => {
+                // La etiqueta se pinta como HTML: el PTR lo controla el dueño de la IP
+                // remota, así que TODO dato se escapa antes de interpolarlo.
+                const e = s => String(s == null ? "" : s).replace(/[<>&"']/g,
+                    c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&#39;" }[c]));
                 const dom = (this._hostnames && this._hostnames[n.ip]) || "";
                 return `<div style="font-family:monospace;font-size:12px;background:rgba(0,0,0,.85);` +
                     `padding:4px 8px;border:1px solid #18d0ff;border-radius:4px;color:#e0ffe8">` +
-                    `<b>${n.ip || n.id}</b><br>${n.device_type || ""}` +
-                    (dom ? `<br>🌐 ${dom}` : "") +
-                    (n.risk && !n.isExternal ? `<br>Riesgo: ${n.risk}` : "") + `</div>`;
+                    `<b>${e(n.ip || n.id)}</b><br>${e(n.device_type)}` +
+                    (dom ? `<br>🌐 ${e(dom)}` : "") +
+                    (n.risk && !n.isExternal ? `<br>Riesgo: ${e(n.risk)}` : "") + `</div>`;
             })
             .nodeColor(HadesGraph3D.color)
             .nodeVal(n => n.isRouter ? 26 : (n.isExternal ? 4 : (5 + (n.ports ? n.ports.length : 0) * 3)))
@@ -306,7 +310,7 @@ class HadesGraph3D {
         let html = "";
 
         if (tab === "general") {
-            const riskColor = { "CRÍTICO": "#ff0033", "ALTO": "#ff6a00", "MEDIO": "#ffd400", "BAJO": "#39ff14", "INFORMATIVO": "#9aa0a6" }[h.risk] || "#9aa0a6";
+            const riskColor = { "CRÍTICO": "#ff0033", "ALTO": "#ff6a00", "MEDIO": "#ffd400", "BAJO": "#39ff14", "NO EVALUADO": "#b04dff", "INFORMATIVO": "#9aa0a6" }[h.risk] || "#9aa0a6";
             const isLocal = h.ip && /^(10\.|192\.168\.|172\.)/.test(h.ip);
             html = `<div style="margin-bottom:8px"><span style="display:inline-block;padding:2px 10px;border-radius:4px;` +
                 `background:${riskColor};color:#000;font-weight:bold;font-family:var(--font-mono)">RIESGO: ${esc(h.risk || "N/D")}</span></div>`
@@ -369,13 +373,13 @@ class HadesGraph3D {
         set("stExternos", stats.externos || 0);
         set("stPuertos", stats.puertos_abiertos || 0);
         set("stAlto", (stats.riesgo["ALTO"] || 0) + (stats.riesgo["CRÍTICO"] || 0));
-        const order = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"];
+        const order = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "NO EVALUADO", "INFORMATIVO"];
         const max = order.find(k => stats.riesgo[k] > 0) || "—";
         const el = document.getElementById("stRiesgo");
         if (el) {
             el.textContent = max;
             el.style.color = { "CRÍTICO": "#ff0033", "ALTO": "#ff6a00", "MEDIO": "#ffd400",
-                               "BAJO": "#39ff14", "INFORMATIVO": "#b0b0b0", "—": "#b0b0b0" }[max];
+                               "BAJO": "#39ff14", "NO EVALUADO": "#b04dff", "INFORMATIVO": "#b0b0b0", "—": "#b0b0b0" }[max];
         }
     }
 

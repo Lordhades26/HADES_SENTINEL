@@ -401,6 +401,15 @@ _rdns_cache = {}        # ip -> hostname ("" si no tiene PTR)
 _rdns_inflight = set()
 
 
+def _sanitize_ptr(host):
+    """El PTR lo controla el dueño de la IP remota: sólo se acepta un hostname
+    RFC 1123 válido. Cualquier otra cosa (HTML, comillas, espacios) se descarta
+    para que nunca llegue a la etiqueta HTML del mapa (XSS → POST /api/scan)."""
+    from hades_validation import _is_valid_hostname
+    host = (host or "").strip().rstrip(".")
+    return host if host and _is_valid_hostname(host) else ""
+
+
 def _queue_rdns(ip):
     """Resuelve el DNS inverso (PTR) de una IP en segundo plano y lo cachea.
     No bloquea /api/graph: el hostname aparece en el siguiente ciclo de polling."""
@@ -411,7 +420,7 @@ def _queue_rdns(ip):
     def _resolve():
         host = ""
         try:
-            host = socket.gethostbyaddr(ip)[0]
+            host = _sanitize_ptr(socket.gethostbyaddr(ip)[0])
         except Exception:
             host = ""
         _rdns_cache[ip] = host
@@ -514,7 +523,7 @@ def build_graph_data():
             "activos": sum(1 for h in hosts if h["status"].startswith("activo")),
             "externos": len(externals),
             "puertos_abiertos": sum(len(h["ports"]) for h in hosts),
-            "riesgo": {k: c.get(k, 0) for k in ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]},
+            "riesgo": {k: c.get(k, 0) for k in ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "NO EVALUADO", "INFORMATIVO"]},
         },
     })
     return result
@@ -617,6 +626,11 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
         # Sin caché: el dashboard es local y evoluciona; así el navegador siempre
         # recibe la versión actual de los .js/.html sin necesidad de recarga forzada.
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        # Anti-clickjacking: ninguna página puede enmarcar el dashboard para
+        # inducir clics sobre «Escanear»/«Detener». No limita scripts.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.send_header("X-Content-Type-Options", "nosniff")
         super().end_headers()
 
     def _request_allowed(self):

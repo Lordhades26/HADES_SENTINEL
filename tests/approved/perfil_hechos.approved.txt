@@ -1,0 +1,9 @@
+{
+  "netbios_mac": "00:11:22:33:44:55",
+  "netbios_nombre": "IMPRESORA-PISO2",
+  "netbios_usuario": "<unknown>",
+  "netbios_vendor": "Hewlett Packard",
+  "snmp_activo": true,
+  "snmp_sysdescr": "HP ETHERNET MULTI-ENVIRONMENT,ROM none,JETDIRECT,JD153",
+  "snmp_sysname": "IMPRESORA-PISO2"
+}

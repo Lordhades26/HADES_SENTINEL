@@ -1,0 +1,8 @@
+[
+  "El análisis IA no menciona el/los puerto(s) 443, 445, 3306 detectado(s) por el escaneo.",
+  "El análisis IA no considera el sistema operativo detectado (Linux 2.6.32 - 3.10).",
+  "El análisis IA cita CVE que no aparecen en la evidencia recogida: CVE-2099-0001. Verificar antes de darlos por válidos.",
+  "Posible atribución IA sin respaldo: CVE-2099-0001 a openssh; el hallazgo de herramienta no vincula ambos.",
+  "El análisis IA omite TLSv1.0, observado por el script de Nmap.",
+  "El análisis IA describe como actualizado un componente cuya versión detectada es de 2017. Revisar la severidad asignada."
+]

@@ -1,0 +1,37 @@
+[
+  [
+    "A.5.15",
+    "Control de acceso",
+    "Servicios de administración remota (SSH/RDP/VNC) expuestos."
+  ],
+  [
+    "A.5.7",
+    "Inteligencia de amenazas",
+    "Incorporar inteligencia de amenazas al proceso de gestión de riesgos."
+  ],
+  [
+    "A.8.16",
+    "Actividades de seguimiento (monitorización)",
+    "Monitorización continua de la red y los activos."
+  ],
+  [
+    "A.8.20",
+    "Seguridad de las redes",
+    "Servicios de red expuestos detectados en hosts de la LAN."
+  ],
+  [
+    "A.8.21",
+    "Seguridad de los servicios de red",
+    "Necesidad de asegurar y monitorizar los servicios de red activos."
+  ],
+  [
+    "A.8.8",
+    "Gestión de vulnerabilidades técnicas",
+    "Se detectaron vulnerabilidades conocidas y/o software/SO desactualizado."
+  ],
+  [
+    "A.8.9",
+    "Gestión de la configuración",
+    "Asegurar configuraciones base seguras en los activos."
+  ]
+]

@@ -99,9 +99,22 @@ RISK_COLORS = {
     "ALTO":        "E36C09",
     "MEDIO":       "BF9000",
     "BAJO":        "548235",
+    "NO EVALUADO": "7030A0",
     "INFORMATIVO": "808080",
 }
-RISK_ORDER = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "INFORMATIVO"]
+# «NO EVALUADO» = la herramienta falló y no hay evidencia para clasificar el
+# activo. No es un riesgo bajo: va antes que INFORMATIVO y obliga a repetir.
+RISK_ORDER = ["CRÍTICO", "ALTO", "MEDIO", "BAJO", "NO EVALUADO", "INFORMATIVO"]
+
+# Marcas que execute()/los parsers dejan cuando una herramienta no terminó bien.
+FALLO_HERRAMIENTA_RE = re.compile(
+    r"\[(?:ERROR|TIMEOUT)\]|\[EXIT rc=|Binario (?:Nmap )?no encontrado|no encontrado en .*omitida",
+    re.IGNORECASE,
+)
+NUCLEI_NO_CONCLUYENTE_RE = re.compile(
+    r"\[NUCLEI\] (?:ERROR|TIMEOUT|SALIDA NO INTERPRETABLE)|— PARCIAL:", re.IGNORECASE)
+TLS_FALLO_RE = re.compile(r"errno|connect:|\[(?:ERROR|TIMEOUT)\]|\[EXIT rc=|no encontrado",
+                          re.IGNORECASE)
 
 
 def _rgb(t):
@@ -165,8 +178,10 @@ def _parse_host_block(ip, blk):
     host = {
         "ip": ip, "status": "desconocido", "mac": "", "vendor": "",
         "os": "", "ports": [], "cves_confirmados": [], "nuclei": [],
-        "texto_ia": "", "risk": "INFORMATIVO",
+        "texto_ia": "", "control_ia": "", "tls": [], "risk": "INFORMATIVO",
         "latency": "", "traceroute": [], "device_type": "Desconocido",
+        # Pruebas que no terminaron bien: nunca se leen como «sin hallazgos».
+        "no_concluyente": [],
     }
 
     # Sección NMAP
@@ -182,6 +197,17 @@ def _parse_host_block(ip, blk):
         host["status"] = "activo (todos los puertos filtrados)"
     elif re.search(r"Host is up", nmap_txt):
         host["status"] = "activo"
+
+    fallo_nmap = FALLO_HERRAMIENTA_RE.search(nmap_txt)
+    if fallo_nmap:
+        if host["status"] == "desconocido":
+            # Sin evidencia de la herramienta no se puede clasificar el activo.
+            host["status"] = "no evaluado (Nmap falló o se cortó por tiempo)"
+            host["no_concluyente"].append(
+                "Nmap: la exploración no terminó; no hay evidencia para clasificar el activo.")
+        else:
+            host["no_concluyente"].append(
+                "Nmap: resultado PARCIAL (la exploración no terminó completa).")
 
     # MAC + fabricante
     mac_m = re.search(r"MAC Address:\s*([0-9A-Fa-f:]{17})\s*(?:\(([^)]*)\))?", nmap_txt)
@@ -216,9 +242,12 @@ def _parse_host_block(ip, blk):
         for line in nu_m.group(1).splitlines():
             line = line.strip()
             sev = re.match(r"\[(CRITICAL|HIGH|MEDIUM|LOW|INFO)\]", line, re.IGNORECASE)
-            if sev:
+            if sev and line not in host["nuclei"]:
                 host["nuclei"].append(line)
                 nuclei_lines.append(line)
+            elif (NUCLEI_NO_CONCLUYENTE_RE.search(line) or FALLO_HERRAMIENTA_RE.search(line)) \
+                    and not any(n.startswith("Nuclei:") for n in host["no_concluyente"]):
+                host["no_concluyente"].append(f"Nuclei: {line[:300]}")
 
     # Procedencia estricta: Nmap sólo confirma CVE en salida de scripts NSE
     # (líneas "|" / "|_"), no en banners de servicios controlables por el host.
@@ -233,10 +262,41 @@ def _parse_host_block(ip, blk):
         cve.upper() for cve in CVE_RE.findall(cve_evidence)
     })
 
+    # Datos TLS verificados: no depender de que el comentario del modelo los cite.
+    tls_lines = [
+        line.strip() for line in nmap_txt.splitlines()
+        if re.search(r"TLSv1\.[01]|SSLv[23]", line, re.IGNORECASE)
+    ]
+    for match in re.finditer(
+        r"\[SSL/TLS\](.*?)(?=\[SSL/TLS\]|\[ANÁLISIS IA HADES\]|$)", blk, re.DOTALL
+    ):
+        bloque_tls = match.group(1)
+        tls_lines.extend(
+            line.strip() for line in bloque_tls.splitlines()
+            if re.search(r"Objetivo:|subject=|issuer=|Verify return code:|verify error:|"
+                         r"notBefore=|notAfter=|Cipher is|Protocol\s*:|TLSv1\.[01]", line, re.I)
+        )
+        # Sin handshake verificado y con marca de fallo: la auditoría TLS no se
+        # hizo. Antes sólo quedaba «Objetivo: …» y parecía un TLS sin problemas.
+        if TLS_FALLO_RE.search(bloque_tls) and not re.search(
+                r"Verify return code:|Cipher is", bloque_tls, re.I):
+            obj = re.search(r"Objetivo:\s*(\S+)", bloque_tls)
+            host["no_concluyente"].append(
+                f"TLS: sin respuesta o error de conexión en {obj.group(1) if obj else 'el servicio'}; "
+                "certificado y protocolo NO verificados.")
+    host["tls"] = list(dict.fromkeys(tls_lines))
+
     # Análisis IA
     ai_m = re.search(r"\[ANÁLISIS IA HADES\](.*)", blk, re.DOTALL)
     if ai_m:
-        host["texto_ia"] = ai_m.group(1).split("\n---")[0].strip()
+        host["texto_ia"] = re.split(
+            r"\[CONTROL DE COBERTURA DEL ANÁLISIS IA\]|\n---", ai_m.group(1), maxsplit=1
+        )[0].strip()
+    control_m = re.search(
+        r"\[CONTROL DE COBERTURA DEL ANÁLISIS IA\](.*?)(?:\n---|$)", blk, re.DOTALL
+    )
+    if control_m:
+        host["control_ia"] = control_m.group(1).strip()
 
     # Latencia: "Host is up (0.0032s latency)."
     lat_m = re.search(r"Host is up \(([\d.]+)s latency\)", nmap_txt)
@@ -302,17 +362,24 @@ RISKY_SERVICES = {"telnet", "ftp", "microsoft-ds", "netbios-ssn", "msrpc", "ms-w
                   "rdp", "vnc", "ms-sql-s", "mysql"}
 OUTDATED_OS_RE = re.compile(r"2\.6\b|vista|2008|windows xp|android 2|server 2003", re.IGNORECASE)
 CRITICAL_NUCLEI_RE = re.compile(r"\[(CRITICAL|HIGH)\]", re.IGNORECASE)
+ACTIONABLE_NUCLEI_RE = re.compile(r"\[(CRITICAL|HIGH|MEDIUM|LOW)\]", re.IGNORECASE)
 
 
 def _assess_risk(host):
     """Nivel de riesgo DETERMINISTA basado en evidencia (no en la IA)."""
+    if host["status"].startswith("no evaluado"):
+        return "NO EVALUADO"
     if host["status"].startswith("caído"):
         return "INFORMATIVO"
 
     score = 0
     score += 3 * len(host["cves_confirmados"])
-    score += 2 * sum(1 for n in host["nuclei"] if CRITICAL_NUCLEI_RE.search(n))
-    score += 1 * len(host["nuclei"])
+    score += sum(
+        3 if CRITICAL_NUCLEI_RE.search(n) else
+        2 if re.search(r"\[MEDIUM\]", n, re.I) else
+        1 if re.search(r"\[LOW\]", n, re.I) else 0
+        for n in host["nuclei"]
+    )
     for p in host["ports"]:
         if p["port"] in RISKY_PORTS or p["service"].lower() in RISKY_SERVICES:
             score += 2
@@ -343,7 +410,10 @@ def map_iso_controls(data):
         controls.setdefault(cid, [title, set()])[1].add(why)
 
     any_open = any(h["ports"] for h in data["hosts"])
-    any_cve = any(h["cves_confirmados"] or h["nuclei"] for h in data["hosts"])
+    any_cve = any(
+        h["cves_confirmados"] or any(ACTIONABLE_NUCLEI_RE.search(n) for n in h["nuclei"])
+        for h in data["hosts"]
+    )
     any_cleartext = False
     any_smb = False
     any_mgmt = False
@@ -431,42 +501,20 @@ def _add_page_number(footer_par):
     run._r.append(fldChar1); run._r.append(instrText); run._r.append(fldChar2)
 
 
-# Metodología por fases (kill-chain) — estructura solicitada para el informe
-PHASES = [
-    ("FASE 1 — RECONOCIMIENTO",
-     "Escaneo de servicios con Nmap.",
-     "Servicio SSH expuesto.",
-     "Inventario de la superficie de ataque.",
-     "Reducir exposición y filtrar el acceso por firewall."),
-    ("FASE 2 — IDENTIFICACIÓN DE VULNERABILIDAD",
-     "Metasploit ssh_login.",
-     "Credenciales SSH débiles.",
-     "Registro de la credencial comprometida.",
-     "Contraseñas robustas, MFA y bloqueo por intentos fallidos."),
-    ("FASE 3 — EXPLOTACIÓN / OBTENCIÓN DE ACCESO",
-     "Sesión vía ssh_login.",
-     "Acceso no autorizado al servidor.",
-     "Validación del acceso.",
-     "Mínimo privilegio y monitoreo de accesos."),
-    ("FASE 4 — BACKDOOR Y ACCESO REMOTO",
-     "Payload msfvenom + multi/handler.",
-     "Ejecución remota y sesión Meterpreter.",
-     "Documentación del canal.",
-     "Antivirus/EDR, parches y control de aplicaciones."),
-    ("FASE 5 — POST-EXPLOTACIÓN Y PERSISTENCIA",
-     "Cron, .bashrc y cuenta privilegiada.",
-     "Múltiples mecanismos de persistencia y malware implantado.",
-     "Registro de cada artefacto.",
-     "Monitoreo de integridad, hardening y gestión de cuentas/servicios."),
-    ("FASE 6 — ERRADICACIÓN Y REPORTE",
-     "Detección y limpieza por el blue team.",
-     "Entorno restaurable.",
-     "Eliminación de todos los artefactos.",
-     "Plan de respuesta a incidentes y lecciones aprendidas."),
+# Etapas del motor. Son una descripción del flujo, no hallazgos ni pruebas de
+# explotación: cada resultado concreto se obtiene de las secciones técnicas.
+SCAN_STAGES = [
+    ("Descubrimiento", "Nmap identifica hosts que responden en la red objetivo."),
+    ("Captura de tráfico", "Tshark captura durante el intervalo configurado, si está disponible."),
+    ("Plantillas", "Nuclei comprueba las plantillas locales y sólo intenta descargarlas si faltan."),
+    ("Auditoría por host", "Nmap examina puertos y versiones; SNMP/NetBIOS aporta identidad cuando responde."),
+    ("Vulnerabilidades y TLS", "Nuclei evalúa servicios web detectados y OpenSSL consulta los HTTPS aplicables, si están disponibles."),
+    ("Análisis y consolidación", "Ollama aporta un comentario consultivo opcional; el informe conserva la evidencia de las herramientas."),
 ]
 
 # Riesgo determinista → severidad de negocio
-SEVERITY = {"CRÍTICO": "Crítica", "ALTO": "Alta", "MEDIO": "Media", "BAJO": "Baja", "INFORMATIVO": "Informativa"}
+SEVERITY = {"CRÍTICO": "Crítica", "ALTO": "Alta", "MEDIO": "Media", "BAJO": "Baja",
+            "NO EVALUADO": "No evaluada", "INFORMATIVO": "Informativa"}
 
 
 def _business_impact(host):
@@ -477,8 +525,8 @@ def _business_impact(host):
     impacts = []
     if (ports & {"445", "139", "135"}) or "microsoft-ds" in svcs or "netbios" in svcs:
         impacts.append("robo o cifrado de información (ransomware) y movimiento lateral")
-    if host["cves_confirmados"] or any(s in svcs for s in ()) or host["nuclei"]:
-        impacts.append("explotación de vulnerabilidades conocidas")
+    if host["cves_confirmados"] or any(ACTIONABLE_NUCLEI_RE.search(n) for n in host["nuclei"]):
+        impacts.append("explotación de vulnerabilidades o configuraciones inseguras detectadas")
     if (ports & {"23", "21"}) or "telnet" in svcs or "ftp" in svcs:
         impacts.append("interceptación de credenciales por tráfico sin cifrar")
     if ports & {"22", "3389", "5900"}:
@@ -486,9 +534,15 @@ def _business_impact(host):
     if OUTDATED_OS_RE.search(os_l):
         impacts.append("interrupción de operaciones por software sin soporte")
     if not impacts:
+        if host["status"].startswith("no evaluado"):
+            return ("No evaluado: la exploración falló o se cortó; repetir la auditoría de "
+                    "este activo antes de concluir sobre su riesgo.")
         if host["status"].startswith("caído"):
             return "Sin impacto inmediato (host inactivo)."
         if not host["ports"]:
+            if host.get("no_concluyente"):
+                return ("Bajo según la evidencia disponible; hay pruebas no concluyentes "
+                        "(ver anexo técnico).")
             return "Bajo: sin servicios expuestos a la red."
         impacts.append("exposición de servicios en la red interna")
     return "Riesgo de " + "; ".join(impacts) + "."
@@ -496,7 +550,9 @@ def _business_impact(host):
 
 def _prob_impact(host):
     """Probabilidad e impacto (0=Bajo,1=Medio,2=Alto) para la matriz de riesgo."""
-    score_p = len(host["cves_confirmados"]) * 2 + sum(1 for p in host["ports"] if p["port"] in RISKY_PORTS) + len(host["nuclei"])
+    score_p = (len(host["cves_confirmados"]) * 2
+               + sum(1 for p in host["ports"] if p["port"] in RISKY_PORTS)
+               + sum(1 for n in host["nuclei"] if ACTIONABLE_NUCLEI_RE.search(n)))
     prob = 2 if score_p >= 3 else (1 if score_p >= 1 else 0)
     r = host["risk"]
     imp = 2 if r in ("CRÍTICO", "ALTO") else (1 if r == "MEDIO" else 0)
@@ -702,7 +758,7 @@ def build_iso27001_docx(data, output_path):
     r.bold = True; r.underline = True; r.font.name = "Times New Roman"; r.font.size = Pt(24)
     r.font.color.rgb = _rgb(BRANDING["primary"])
     s = doc.add_paragraph(); s.alignment = WD_ALIGN_PARAGRAPH.CENTER; s.paragraph_format.line_spacing = 1.0
-    r = s.add_run(f"Conforme a {BRANDING['standard']}")
+    r = s.add_run(f"Referencia técnica: {BRANDING['standard']}")
     r.font.name = "Times New Roman"; r.font.size = Pt(14); r.font.color.rgb = _rgb(BRANDING["secondary"])
 
     for _ in range(3):
@@ -723,24 +779,32 @@ def build_iso27001_docx(data, output_path):
 
     # ── 1. RESUMEN EJECUTIVO (lenguaje de negocio, sin tecnicismos) ──
     _heading(doc, "1. Resumen Ejecutivo", 1)
-    nivel_global = "ALTO" if criticos else ("MEDIO" if risk_count["MEDIO"] else "BAJO")
-    _body(doc,
-        f"Se evaluó la seguridad de la red corporativa ({data.get('subnet') or 'objetivo'}) para determinar "
-        f"qué tan expuesta está la organización ante un ciberataque. Se revisaron {len(hosts)} equipos, de los "
-        f"cuales {len(up)} estaban activos. En términos de negocio, el nivel de riesgo global es {nivel_global}: "
-        f"se identificaron {criticos} activo(s) que requieren acción prioritaria por su potencial de causar robo "
-        f"de información, interrupción de las operaciones o acceso no autorizado a los sistemas. La conclusión "
-        f"principal es que existen servicios expuestos y debilidades que un atacante podría aprovechar. Este "
-        f"informe traduce cada hallazgo técnico en un riesgo de negocio y en una acción concreta priorizada; el "
-        f"detalle técnico reproducible se incluye en los anexos para no saturar la lectura directiva.")
+    if hosts:
+        nivel_global = "ALTO" if criticos else ("MEDIO" if risk_count["MEDIO"] else "BAJO")
+        resumen = (
+            f"Se evaluó la red objetivo ({data.get('subnet') or 'objetivo'}). "
+            f"Se revisaron {len(hosts)} equipos, de los cuales {len(up)} estaban activos. "
+            f"El nivel de riesgo global calculado para los activos evaluados es {nivel_global}; "
+            f"{criticos} activo(s) requieren atención prioritaria. Los hallazgos observados, "
+            "sus límites y las acciones recomendadas se detallan por activo en este informe."
+        )
+    else:
+        resumen = (
+            f"No se detectaron activos evaluables en la red objetivo "
+            f"{data.get('subnet') or 'indicada'}. No es posible asignar un nivel de "
+            "riesgo a los dispositivos sin evidencia de escaneo por host."
+        )
+    _body(doc, resumen)
 
     # ── 2. ALCANCE Y METODOLOGÍA ──
     _heading(doc, "2. Alcance y Metodología", 1)
     _body(doc,
         f"Sistemas evaluados: dispositivos accesibles en la red {data.get('subnet') or 'objetivo'}. "
         f"Fecha: {data.get('date') or datetime.now().strftime('%d/%m/%Y')}. "
-        f"Autorización: auditoría interna autorizada por la dirección. "
-        f"Estándar de referencia: {BRANDING['standard']}. La evaluación combina descubrimiento de red, "
+        f"La autorización y el alcance se acuerdan previamente con el titular de la red; "
+        f"la referencia del acuerdo no está incorporada en este archivo. "
+        f"Marco de referencia: {BRANDING['standard']} para relacionar hallazgos con controles; "
+        f"este escaneo no evalúa por sí solo la conformidad del SGSI. La evaluación combina descubrimiento de red, "
         f"identificación de servicios y vulnerabilidades, captura de tráfico y análisis asistido, siguiendo la "
         f"metodología por fases que se describe a continuación.")
     mt = doc.add_table(rows=1, cols=2); mt.style = "Table Grid"
@@ -754,17 +818,17 @@ def build_iso27001_docx(data, output_path):
         _set_cell_text(row[0], tool, bold=True, color=_rgb(BRANDING["primary"]))
         _set_cell_text(row[1], desc)
 
-    # ── 3. METODOLOGÍA POR FASES (kill-chain) ──
-    _heading(doc, "3. Metodología por Fases", 1)
-    _body(doc, "El ejercicio sigue la cadena de ataque en seis fases. Para cada fase se documenta el método "
-               "empleado, el hallazgo, la acción realizada y la mitigación recomendada:")
-    for titulo, metodo, hallazgo, accion, mitig in PHASES:
-        _heading(doc, titulo, 2)
-        pt = doc.add_table(rows=0, cols=2); pt.style = "Table Grid"
-        for k, v in [("Método", metodo), ("Hallazgo", hallazgo), ("Acción", accion), ("Mitigación", mitig)]:
-            c = pt.add_row().cells
-            _set_cell_text(c[0], k, bold=True, color=_rgb(BRANDING["primary"]), size=11)
-            _set_cell_text(c[1], v, size=11)
+    # ── 3. METODOLOGÍA REAL DEL MOTOR ──
+    _heading(doc, "3. Metodología Técnica", 1)
+    _body(doc, "Estas etapas describen el flujo de HADES. Cada herramienta se ejecuta cuando está "
+               "disponible y se cumple su condición de uso. Los hallazgos y omisiones de la corrida "
+               "se presentan por activo en los anexos técnicos.")
+    stages = doc.add_table(rows=1, cols=2); stages.style = "Table Grid"
+    _header_row(stages, ["Etapa", "Operación y condición"])
+    for title, detail in SCAN_STAGES:
+        cells = stages.add_row().cells
+        _set_cell_text(cells[0], title, bold=True, color=_rgb(BRANDING["primary"]), size=11)
+        _set_cell_text(cells[1], detail, size=11)
 
     # ── 4. HALLAZGOS CLASIFICADOS POR SEVERIDAD ──
     _heading(doc, "4. Hallazgos Clasificados por Severidad", 1)
@@ -841,8 +905,12 @@ def build_iso27001_docx(data, output_path):
         irow("Dirección MAC / fabricante", f"{h['mac']} ({h['vendor']})" if h["mac"] else "N/D")
         irow("Latencia", h.get("latency"))
         irow("Vulnerabilidades (CVE)", ", ".join(h["cves_confirmados"]) if h["cves_confirmados"] else "Ninguna por CVE")
+        if h.get("no_concluyente"):
+            irow("Pruebas NO concluyentes", "\n".join(h["no_concluyente"]))
         if h["nuclei"]:
             irow("Hallazgos Nuclei", "\n".join(h["nuclei"]))
+        if h["tls"]:
+            irow("TLS y certificado", "\n".join(h["tls"]))
         if h.get("traceroute"):
             irow("Traceroute", "  /  ".join(f"{x['hop']}.{x['ip']} ({x['rtt']})" for x in h["traceroute"]))
         if h["ports"]:
@@ -859,6 +927,8 @@ def build_iso27001_docx(data, output_path):
             r.bold = True; r.font.name = "Times New Roman"; r.font.color.rgb = _rgb(BRANDING["secondary"])
             bp = _body(doc, re.sub(r"\*\*(.+?)\*\*", r"\1", h["texto_ia"])[:3000])
             bp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        if h["control_ia"]:
+            irow("Control del análisis IA", h["control_ia"])
         doc.add_paragraph()
 
     _heading(doc, "Anexo — Mapeo a Controles ISO/IEC 27001 (Anexo A)", 2)
@@ -900,9 +970,15 @@ def _build_recommendations(data):
                 mgmt = True
         if OUTDATED_OS_RE.search(h.get("os", "")):
             outdated = True
-        if h["cves_confirmados"] or h["nuclei"]:
+        if h["cves_confirmados"]:
             cves = True
     recs = []
+    pendientes = [h["ip"] for h in data["hosts"] if h.get("no_concluyente")]
+    if pendientes:
+        # Una prueba fallida no demuestra ausencia de riesgo: el cliente debe saberlo.
+        recs.append({"rec": "Repetir las pruebas NO concluyentes (fallo, corte por tiempo o sin respuesta) "
+                            f"en: {', '.join(pendientes)}. Hasta entonces no hay evidencia de ausencia de riesgo.",
+                     "prioridad": "Alta", "responsable": "Equipo auditor", "plazo": "Antes de emitir el informe"})
     if cves:
         recs.append({"rec": "Aplicar parches y actualizaciones para remediar las vulnerabilidades con CVE (control A.8.8).",
                      "prioridad": "Alta", "responsable": "Equipo de TI / Sistemas", "plazo": "7 días"})

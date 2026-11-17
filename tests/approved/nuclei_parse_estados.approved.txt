@@ -1,0 +1,14 @@
+{
+  "advertencia_texto": "[NUCLEI] SALIDA NO INTERPRETABLE en http://192.0.2.10: 1 línea(s) que no son hallazgos JSON de Nuclei. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  [WRN] Found 2 templates with runtime error (low)",
+  "codigo_salida_no_cero": "[NUCLEI] ERROR en http://192.0.2.10: la herramienta no completó el escaneo. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  [EXIT rc=1] nuclei terminó con error",
+  "hallazgos_jsonl": "[NUCLEI] 2 hallazgo(s) en http://192.0.2.10:\n  [CRITICAL] Apache 2.4.49 Path Traversal [CVE-2021-41773] → http://192.0.2.10/cgi-bin/.%2e/etc/passwd\n  [INFO] HTTP Missing Security Headers → http://192.0.2.10",
+  "json_ajeno": "[NUCLEI] SALIDA NO INTERPRETABLE en http://192.0.2.10: 1 línea(s) que no son hallazgos JSON de Nuclei. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  {\"x\": 1}",
+  "jsonl_malformado": "[NUCLEI] SALIDA NO INTERPRETABLE en http://192.0.2.10: 1 línea(s) que no son hallazgos JSON de Nuclei. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  {\"template-id\":\"x\",\"info\":{\"name\":\"roto\"",
+  "solo_error": "[NUCLEI] ERROR en http://192.0.2.10: la herramienta no completó el escaneo. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  [ERROR]: [WinError 2] El sistema no puede encontrar el archivo especificado",
+  "solo_stderr": "[NUCLEI] ERROR en http://192.0.2.10: la herramienta no completó el escaneo. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  [STDERR]: [FTL] Could not run nuclei: no templates provided for scan",
+  "stderr_multilinea_fatal": "[NUCLEI] ERROR en http://192.0.2.10: la herramienta no completó el escaneo. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  [FTL] Could not create runner: no templates",
+  "stderr_solo_avisos": "[NUCLEI] Sin hallazgos en http://192.0.2.10",
+  "timeout_con_hallazgos": "[NUCLEI] 2 hallazgo(s) en http://192.0.2.10 — PARCIAL: el escaneo se cortó por tiempo; puede haber más hallazgos:\n  [CRITICAL] Apache 2.4.49 Path Traversal [CVE-2021-41773] → http://192.0.2.10/cgi-bin/.%2e/etc/passwd\n  [INFO] HTTP Missing Security Headers → http://192.0.2.10",
+  "timeout_sin_hallazgos": "[NUCLEI] TIMEOUT en http://192.0.2.10: el escaneo se cortó por tiempo sin completar. Resultado NO concluyente (no equivale a «sin hallazgos»).\n  [TIMEOUT] Comando excedió 300s; resultados PARCIALES: nuclei -u http://192.0.2.10",
+  "vacio": "[NUCLEI] Sin hallazgos en http://192.0.2.10"
+}

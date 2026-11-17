@@ -1,0 +1,12 @@
+{
+  "bloque": "",
+  "hechos": {
+    "netbios_mac": "",
+    "netbios_nombre": "",
+    "netbios_usuario": "",
+    "netbios_vendor": "",
+    "snmp_activo": false,
+    "snmp_sysdescr": "",
+    "snmp_sysname": ""
+  }
+}

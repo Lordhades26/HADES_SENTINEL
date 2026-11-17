@@ -1,0 +1,5 @@
+  - Nombre SNMP (sysName): IMPRESORA-PISO2
+  - Descripción SNMP (sysDescr): HP ETHERNET MULTI-ENVIRONMENT,ROM none,JETDIRECT,JD153
+  - Nombre NetBIOS: IMPRESORA-PISO2
+  - Grupo/usuario NetBIOS: <unknown>
+  - MAC (NetBIOS): 00:11:22:33:44:55 — fabricante: Hewlett Packard

@@ -35,3 +35,6 @@ desktop.ini
 # Build temporal del mapa (esbuild)
 _mapbuild/
 node_modules/
+
+# Tests de aprobación: salidas pendientes de revisar (no se versionan)
+tests/approved/*.received.txt
