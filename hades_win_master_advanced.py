@@ -807,7 +807,10 @@ class HadesMCP:
         """Conserva el resultado de verificación y parámetros TLS sin el PEM."""
         patron = re.compile(
             r"subject=|issuer=|Verify return code:|verify error:|notBefore=|notAfter=|"
-            r"Cipher is|Protocol\s*:|TLSv1\.[01]|SSLv[23]", re.I
+            r"Cipher is|Protocol\s*:|TLSv1\.[01]|SSLv[23]|"
+            # Los fallos de conexión también son evidencia: sin ellos el informe
+            # mostraba sólo «Objetivo: …» y parecía un TLS auditado sin problemas.
+            r"errno|connect:|\[(?:ERROR|TIMEOUT)\]|\[EXIT rc=|no encontrado", re.I
         )
         lineas = [line.strip() for line in str(raw or "").splitlines() if patron.search(line)]
         if not lineas:
@@ -935,6 +938,12 @@ class HadesMCP:
         # 2. Detectar puertos web abiertos del resultado Nmap
         if web_ports is None:
             web_ports = self._detect_web_ports(nmap_out, ip)
+            if not web_ports and not re.search(r"Nmap scan report for|Host is up", nmap_out or ""):
+                # Sin resultado válido de Nmap no se sabe si hay servicios web:
+                # dejar constancia en vez de aparentar «sin servicios web».
+                report.append(
+                    f"\n[NUCLEI]\n[NUCLEI] OMITIDO en {ip}: Nmap no entregó un resultado válido, "
+                    f"no se pudieron identificar servicios web ni TLS. {self._NO_CONCLUYENTE}")
 
         # 3. Nuclei sobre cada puerto web detectado
         nuclei_results = []

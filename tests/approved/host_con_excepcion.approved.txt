@@ -1,0 +1,27 @@
+[
+  {
+    "ip": "192.0.2.10",
+    "no_concluyente": [
+      "Nmap: la exploración no terminó; no hay evidencia para clasificar el activo."
+    ],
+    "ports": [],
+    "risk": "NO EVALUADO",
+    "status": "no evaluado (Nmap falló o se cortó por tiempo)"
+  },
+  {
+    "ip": "192.0.2.11",
+    "no_concluyente": [
+      "Auditoría interrumpida: La auditoría del host 192.0.2.11 se interrumpió después de reunir la evidencia técnica: IA caída"
+    ],
+    "ports": [
+      {
+        "port": "22",
+        "proto": "tcp",
+        "service": "ssh",
+        "version": "OpenSSH 9.6"
+      }
+    ],
+    "risk": "BAJO",
+    "status": "activo"
+  }
+]

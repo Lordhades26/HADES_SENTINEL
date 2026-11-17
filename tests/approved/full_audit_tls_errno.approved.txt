@@ -1,0 +1,28 @@
+
+============================================================
+OBJETIVO: 192.0.2.10
+TIMESTAMP: <fecha>
+============================================================
+
+[NMAP]
+Nmap scan report for 192.0.2.10
+Host is up (0.01s latency).
+443/tcp open ssl/http nginx
+
+
+[NUCLEI]
+[NUCLEI] Sin hallazgos en https://192.0.2.10
+
+[SSL/TLS]
+Objetivo: https://192.0.2.10
+connect:errno=10060
+[EXIT rc=1] La herramienta terminó con error: openssl
+
+[ANÁLISIS IA HADES]
+COMENTARIO CONSULTIVO DE IA — NO VERIFICADO
+No altera hallazgos, severidad ni puntuación determinista; requiere validación humana.
+
+[IA] Análisis omitido (deshabilitado por configuración HADES_SKIP_AI).
+
+[CONTROL DE COBERTURA DEL ANÁLISIS IA]
+  - El análisis IA no menciona el/los puerto(s) 443 detectado(s) por el escaneo.

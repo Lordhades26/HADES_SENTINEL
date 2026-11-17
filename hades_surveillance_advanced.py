@@ -12,6 +12,7 @@ Flujo:
   FASE 5 → Guardar informes (individual por host + maestro .md)
 """
 import os, sys, re
+import ipaddress
 from datetime import datetime
 from collections import defaultdict
 from hades_ai import format_consultative_output
@@ -68,11 +69,43 @@ def detect_active_interface():
 
 
 # ─── ANÁLISIS DE CAPTURA TSHARK ───────────────────────────────────────────────
+def _es_ip_de_internet(ip):
+    """True sólo para direcciones enrutables en Internet: excluye privadas,
+    link-local (169.254), multicast, broadcast, loopback y rangos de documentación."""
+    try:
+        addr = ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return False
+    # ipaddress considera «global» al multicast 224.0.0.0/4: se excluye aparte.
+    return addr.is_global and not addr.is_multicast
+
+
+# Marcas de fallo que deja execute(); el stderr normal de tshark («Capturing on…»,
+# «N packets captured») NO es un error.
+_TSHARK_FALLO_RE = re.compile(r"^\[ERROR\]|^\[EXIT rc=|^tshark: ", re.MULTILINE)
+_TSHARK_TIMEOUT_RE = re.compile(r"^\[TIMEOUT\]", re.MULTILINE)
+
+
+def estado_captura(raw):
+    """COMPLETA / PARCIAL / ERROR de una ejecución de tshark (texto para el informe)."""
+    raw = raw or ""
+    if _TSHARK_FALLO_RE.search(raw):
+        detalle = next((l.strip() for l in raw.splitlines() if _TSHARK_FALLO_RE.match(l.strip())), "")
+        return ("ERROR — la captura falló; el volumen de tráfico NO es concluyente "
+                f"(no equivale a «sin tráfico»). Detalle: {detalle[:200]}")
+    if _TSHARK_TIMEOUT_RE.search(raw):
+        return "PARCIAL — la captura se cortó por tiempo; puede faltar tráfico."
+    return "COMPLETA"
+
+
 def parse_tshark_output(raw, active_ips):
     """
     Procesa la salida de Tshark en campos y devuelve un resumen estructurado.
     Identifica: conexiones activas, IPs externas, protocolos y puertos usados.
+    La primera línea declara el estado de la captura: un fallo nunca se
+    presenta como «0 paquetes».
     """
+    raw = raw or ""
     connections = defaultdict(int)
     external_ips = set()
     protocols = defaultdict(int)
@@ -89,14 +122,15 @@ def parse_tshark_output(raw, active_ips):
             connections[(src, dst, port, proto)] += 1
             protocols[proto] += 1
 
-            # Detectar IPs externas (no LAN 192.168.x.x / 10.x / 172.x)
-            for ip in [src, dst]:
-                if ip and not re.match(r'^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)', ip):
-                    if not ip.startswith("127.") and ip != "0.0.0.0":
-                        external_ips.add(ip)
+            # IPs de Internet: tshark puede listar varias separadas por coma (ICMP anidado).
+            for campo in (src, dst):
+                for ip in campo.split(","):
+                    if _es_ip_de_internet(ip):
+                        external_ips.add(ip.strip())
 
     # Construir resumen legible
     lines = []
+    lines.append(f"  Estado de la captura: {estado_captura(raw)}")
     lines.append(f"  Paquetes/conexiones capturadas: {sum(connections.values())}")
     lines.append(f"  Protocolos detectados: {dict(sorted(protocols.items(), key=lambda x: -x[1]))}")
     lines.append(f"  IPs externas (internet): {len(external_ips)}")
@@ -115,10 +149,13 @@ def parse_tshark_output(raw, active_ips):
                 partner = dst if src == ip else src
                 host_activity[ip].append(f"{proto}:{port} → {partner} ({count}x)")
 
+    captura_fallida = estado_captura(raw).startswith("ERROR")
     for ip in active_ips:
         acts = host_activity.get(ip, [])
         if acts:
             lines.append(f"    [{ip}]: {', '.join(acts[:5])}")
+        elif captura_fallida:
+            lines.append(f"    [{ip}]: sin datos (la captura falló; no se puede afirmar ausencia de tráfico)")
         else:
             lines.append(f"    [{ip}]: sin tráfico capturado en este periodo")
 
@@ -170,7 +207,7 @@ class HadesSurveillance:
                 "OK" if ok else "WARN")
         if not preflight["Nmap"]:
             log("Nmap es imprescindible para el descubrimiento; abortando.", "WARN")
-            return
+            return 2
         # Nota: NO se precarga el modelo en 2º plano para no competir con la primera
         # llamada de análisis (Ollama es monohilo y una conexión concurrente durante la
         # carga del modelo provocaba WinError 10060). La 1ª llamada por host paga la
@@ -195,8 +232,23 @@ class HadesSurveillance:
         active_ips = parse_discovered_hosts(discovery_out)
 
         if not active_ips:
+            if descubrimiento_fallido(discovery_out):
+                # Un Nmap que falla o se corta NO demuestra que no haya hosts:
+                # se deja constancia en disco y se termina con código de error.
+                log("El descubrimiento FALLÓ (error/timeout de Nmap); NO se puede "
+                    "afirmar que no haya hosts. Revisa enlace, ruta y alcance.", "WARN")
+                master_report += (
+                    "| Dispositivos activos | NO DETERMINADO (descubrimiento fallido) |\n\n---\n\n"
+                    "## Fase 1 — Descubrimiento de hosts: ERROR\n"
+                    "Resultado NO concluyente (no equivale a «sin hosts»).\n"
+                    f"```\n{discovery_out[-1500:]}\n```\n")
+                _persist(master_report)
+                return 2
             log("Sin hosts activos. Verifica el rango de red.", "WARN")
-            return
+            master_report += ("| Dispositivos activos | 0 |\n\n---\n\n"
+                              "## Fase 1 — Descubrimiento de hosts\nNmap completó sin hosts activos.\n")
+            _persist(master_report)
+            return 0
 
         log(f"Detectados {len(active_ips)} dispositivo(s): {active_ips}", "OK")
         master_report += f"| Dispositivos activos | {len(active_ips)} |\n"
@@ -208,21 +260,30 @@ class HadesSurveillance:
         # ══════════════════════════════════════════════════════════════════════
         log(f"FASE 2 — Captura de tráfico Tshark ({self.capture_seconds}s)...", "HADES")
 
-        interface = detect_active_interface()
+        if not preflight["Tshark"]:
+            # Sin binario no hay captura: se declara OMITIDA, nunca «0 paquetes».
+            interface = "N/D"
+            tshark_raw = ""
+            tshark_summary = ("  Estado de la captura: OMITIDA — Tshark no está disponible; "
+                              "no se evaluó el tráfico (no equivale a «sin tráfico»).")
+            log("Tshark no disponible: captura OMITIDA.", "WARN")
+        else:
+            interface = detect_active_interface()
 
-        # Capturar campos: ip.src, ip.dst, tcp.dstport, udp.dstport, protocolo
-        tshark_cmd = (
-            f'"{TSHARK_BIN}" -i "{interface}" '
-            f'-a duration:{self.capture_seconds} '
-            f'-T fields '
-            f'-e ip.src -e ip.dst -e tcp.dstport -e udp.dstport -e _ws.col.Protocol '
-            f'-E separator=/t'  # '/t' = tabulador en notación tshark; un '\\t' literal hacía fallar a tshark
-        )
-        log(f"Capturando en [{interface}] durante {self.capture_seconds}s...", "TSHARK")
-        tshark_raw = execute(tshark_cmd, timeout=self.capture_seconds + 15)
-
-        tshark_summary = parse_tshark_output(tshark_raw, active_ips)
-        log("Captura completada.", "OK")
+            # Capturar campos: ip.src, ip.dst, tcp.dstport, udp.dstport, protocolo
+            tshark_cmd = (
+                f'"{TSHARK_BIN}" -i "{interface}" '
+                f'-a duration:{self.capture_seconds} '
+                f'-T fields '
+                f'-e ip.src -e ip.dst -e tcp.dstport -e udp.dstport -e _ws.col.Protocol '
+                f'-E separator=/t'  # '/t' = tabulador en notación tshark; un '\\t' literal hacía fallar a tshark
+            )
+            log(f"Capturando en [{interface}] durante {self.capture_seconds}s...", "TSHARK")
+            tshark_raw = execute(tshark_cmd, timeout=self.capture_seconds + 15)
+            tshark_summary = parse_tshark_output(tshark_raw, active_ips)
+        estado_trafico = tshark_summary.splitlines()[0].split(":", 1)[1].strip()
+        log(f"Captura: {estado_trafico.split(' —')[0]}.",
+            "OK" if estado_trafico.startswith("COMPLETA") else "WARN")
         log(f"Resumen tráfico:\n{tshark_summary}", "TSHARK")
 
         # Guardar pcap de texto
@@ -241,7 +302,11 @@ class HadesSurveillance:
 
         # Análisis IA del tráfico capturado (se omite si no hubo tráfico → evita
         # una llamada IA lenta e inútil, que es lo que congeló el escaneo anterior).
-        if "capturadas: 0" in tshark_summary:
+        if not estado_trafico.startswith(("COMPLETA", "PARCIAL")):
+            log("Captura fallida u omitida; se omite el análisis IA del tráfico.", "HADES")
+            ia_trafico = ("Captura de tráfico fallida u omitida; análisis IA omitido. "
+                          "El tráfico de la red NO fue evaluado.")
+        elif "capturadas: 0" in tshark_summary:
             log("Sin tráfico capturado; se omite el análisis IA del tráfico.", "HADES")
             ia_trafico = "Sin tráfico capturado durante el periodo; análisis IA omitido."
         else:
@@ -294,7 +359,7 @@ class HadesSurveillance:
                 choice = input("Selecciona una opcion (ID de host, 'A' para todos, 'Q' para salir): ").strip().upper()
                 if choice == 'Q':
                     log("Saliendo de HADES. No se realizaron auditorias profundas de hosts.", "HADES")
-                    return
+                    return 0
                 elif choice == 'A':
                     chosen_ips = active_ips
                     log("Opcion seleccionada: Auditoria completa de TODA la red.", "HADES")
@@ -328,7 +393,10 @@ class HadesSurveillance:
             # o caído, el informe ya contiene los hallazgos técnicos del host en vez
             # de quedarse mudo (fallo observado el 25-07-2026: la Fase 4 no dejaba
             # rastro en disco porque el guardado ocurría después de la IA).
+            evidencia_parcial = {}
+
             def _persistir_tecnica(parcial, _ip=ip):
+                evidencia_parcial["texto"] = parcial
                 _persist(master_report + parcial +
                          "\n\n_[análisis IA en curso para este host]_\n\n---\n\n")
                 log(f"Evidencia técnica de {_ip} asegurada en disco.", "OK")
@@ -341,8 +409,7 @@ class HadesSurveillance:
                 log(f"Host {ip} auditado y consolidado en el informe único.", "OK")
             except Exception as e:
                 # ROBUSTEZ: el fallo de UN host no aborta la auditoría completa.
-                err = f"\n[ERROR] La auditoría del host {ip} falló: {e}\n"
-                master_report += f"## Host {ip}\n{err}\n---\n\n"
+                master_report += bloque_host_fallido(ip, e, evidencia_parcial.get("texto"))
                 log(f"Host {ip} falló ({e}); continuando con el resto.", "WARN")
             # Guardado INCREMENTAL tras cada host: si algo revienta después,
             # lo ya auditado queda en disco.
@@ -371,7 +438,7 @@ class HadesSurveillance:
         print(f"\n{'='*65}")
         print(f"  [HADES] Vigilancia v{HADES_VERSION} completada.")
         print(f"  Fase 1 — Dispositivos detectados : {len(active_ips)}")
-        print(f"  Fase 2 — Tráfico capturado       : {self.capture_seconds}s en [{interface}]")
+        print(f"  Fase 2 — Tráfico ({estado_trafico.split(' —')[0]}) : {self.capture_seconds}s en [{interface}]")
         print("  Fase 3 — Templates Nuclei         : verificados")
         print(f"  Fase 4 — Hosts auditados OK       : {audited_ok}/{len(chosen_ips)}")
         print(f"  Informe consolidado (.md) : {master_file}")
@@ -379,6 +446,8 @@ class HadesSurveillance:
             print(f"  Informe ejecutivo (.docx) : {docx_file}")
         print(f"  Carpeta                   : {report_dir}")
         print(f"{'='*65}\n")
+        # 1 = la corrida terminó pero algún host no se pudo auditar.
+        return 0 if audited_ok == len(chosen_ips) else 1
 
 
 # ─── FUNCIONES DE AUTODETECCIÓN DE RED ─────────────────────────────────────────
@@ -391,6 +460,28 @@ def parse_discovered_hosts(discovery_out):
         r"^Nmap scan report for (?:[^\r\n]*?\()?((?:\d{1,3}\.){3}\d{1,3})\)?\s*$",
         discovery_out, re.MULTILINE
     )))
+
+
+def descubrimiento_fallido(discovery_out):
+    """True si Nmap no terminó bien: error, timeout, código de salida o
+    binario ausente, y además no llegó a escribir su línea final «Nmap done»."""
+    txt = discovery_out or ""
+    marcas = re.search(r"^\[(?:ERROR|TIMEOUT)\]|^\[EXIT rc=|Binario .*no encontrado|"
+                       r"Objetivo inválido", txt, re.MULTILINE)
+    return bool(marcas) or ("Nmap done" not in txt)
+
+
+def bloque_host_fallido(ip, error, evidencia_parcial=None):
+    """Bloque del informe maestro para un host cuya auditoría lanzó excepción.
+
+    Usa el delimitador «OBJETIVO:» para que el host NO desaparezca del DOCX
+    (queda «NO EVALUADO» o con la evidencia técnica que alcanzó a reunir)."""
+    if evidencia_parcial:
+        return (f"{evidencia_parcial}\n\n[ERROR DE AUDITORÍA]\nLa auditoría del host {ip} se "
+                f"interrumpió después de reunir la evidencia técnica: {error}\n\n---\n\n")
+    return (f"\n{'=' * 60}\nOBJETIVO: {ip}\n{'=' * 60}\n\n[NMAP]\n"
+            f"[ERROR] La auditoría del host {ip} falló antes de obtener evidencia: {error}\n\n---\n\n")
+
 
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -439,4 +530,6 @@ if __name__ == "__main__":
         target_range=TARGET_RANGE,
         capture_seconds=CAPTURE_SECONDS
     )
-    agent.run()
+    # El código de salida llega al dashboard: 2 = descubrimiento fallido o sin
+    # Nmap, 1 = algún host no se pudo auditar, 0 = corrida completa.
+    sys.exit(agent.run() or 0)

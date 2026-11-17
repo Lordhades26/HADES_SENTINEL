@@ -112,7 +112,7 @@ FALLO_HERRAMIENTA_RE = re.compile(
     re.IGNORECASE,
 )
 NUCLEI_NO_CONCLUYENTE_RE = re.compile(
-    r"\[NUCLEI\] (?:ERROR|TIMEOUT|SALIDA NO INTERPRETABLE)|— PARCIAL:", re.IGNORECASE)
+    r"\[NUCLEI\] (?:ERROR|TIMEOUT|OMITIDO|SALIDA NO INTERPRETABLE)|— PARCIAL:", re.IGNORECASE)
 TLS_FALLO_RE = re.compile(r"errno|connect:|\[(?:ERROR|TIMEOUT)\]|\[EXIT rc=|no encontrado",
                           re.IGNORECASE)
 
@@ -185,8 +185,16 @@ def _parse_host_block(ip, blk):
     }
 
     # Sección NMAP
-    nmap_m = re.search(r"\[NMAP\](.*?)(?:\[NUCLEI\]|\[SSL/TLS\]|\[ANÁLISIS IA HADES\]|$)", blk, re.DOTALL)
+    nmap_m = re.search(
+        r"\[NMAP\](.*?)(?:\[NUCLEI\]|\[SSL/TLS\]|\[ANÁLISIS IA HADES\]|\[ERROR DE AUDITORÍA\]|$)",
+        blk, re.DOTALL)
     nmap_txt = nmap_m.group(1) if nmap_m else ""
+
+    # Excepción después de reunir evidencia (p. ej. en la fase de IA): se informa
+    # aparte para no confundirla con un fallo de Nmap.
+    interrumpida = re.search(r"\[ERROR DE AUDITORÍA\]\s*(.+)", blk)
+    if interrumpida:
+        host["no_concluyente"].append(f"Auditoría interrumpida: {interrumpida.group(1).strip()[:300]}")
 
     # Estado del host
     if re.search(r"Host seems down|0 hosts up", nmap_txt):

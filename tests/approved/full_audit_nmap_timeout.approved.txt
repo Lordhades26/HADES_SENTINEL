@@ -1,0 +1,18 @@
+
+============================================================
+OBJETIVO: 192.0.2.10
+TIMESTAMP: <fecha>
+============================================================
+
+[NMAP]
+
+[TIMEOUT] Comando excedió 390s; resultados PARCIALES: nmap -sV 192.0.2.10
+
+[NUCLEI]
+[NUCLEI] OMITIDO en 192.0.2.10: Nmap no entregó un resultado válido, no se pudieron identificar servicios web ni TLS. Resultado NO concluyente (no equivale a «sin hallazgos»).
+
+[ANÁLISIS IA HADES]
+COMENTARIO CONSULTIVO DE IA — NO VERIFICADO
+No altera hallazgos, severidad ni puntuación determinista; requiere validación humana.
+
+[IA] Análisis omitido (deshabilitado por configuración HADES_SKIP_AI).

@@ -285,6 +285,95 @@ class TestAprobacionContratoExecute(unittest.TestCase):
         verify(self, "execute_contrato", salida)
 
 
+class TestAprobacionAuditoriaConFallos(unittest.TestCase):
+    """full_audit con herramientas que fallan, usando dobles (sin red)."""
+
+    def _auditar(self, nmap_out, ssl_out=None):
+        import re
+        mcp = _mcp()
+        mcp.ai_skip = True
+        mcp.nmap_scan = lambda ip, **kw: nmap_out
+        mcp.asset_profile = lambda ip: ""
+        mcp.nuclei_scan = lambda url, **kw: mcp._parse_nuclei("", url)
+        mcp.ssl_audit = lambda h, p=443: ssl_out or ""
+        salida = mcp.full_audit(IP)
+        return re.sub(r"TIMESTAMP: .*", "TIMESTAMP: <fecha>", salida)
+
+    def test_nmap_con_timeout_deja_constancia(self):
+        verify(self, "full_audit_nmap_timeout",
+               self._auditar("\n[TIMEOUT] Comando excedió 390s; resultados PARCIALES: nmap -sV 192.0.2.10"))
+
+    def test_el_informe_clasifica_los_fallos(self):
+        nmap_ok = ("Nmap scan report for 192.0.2.10\nHost is up (0.01s latency).\n"
+                   "443/tcp open ssl/http nginx\n")
+        bloques = {
+            "nmap_timeout": self._auditar("\n[TIMEOUT] Comando excedió 390s; resultados PARCIALES: nmap"),
+            "tls_errno": self._auditar(nmap_ok, ssl_out="connect:errno=10060\n[EXIT rc=1] openssl"),
+        }
+        salida = {}
+        for nombre, txt in bloques.items():
+            host = informe._parse_host_block(IP, txt.split("OBJETIVO:", 1)[1])
+            salida[nombre] = {k: host[k] for k in ("status", "risk", "no_concluyente")}
+            salida[nombre]["impacto"] = informe._business_impact(host)
+        verify(self, "full_audit_a_informe", salida)
+
+    def test_tls_sin_respuesta_conserva_el_error(self):
+        nmap = ("Nmap scan report for 192.0.2.10\nHost is up (0.01s latency).\n"
+                "443/tcp open ssl/http nginx\n")
+        verify(self, "full_audit_tls_errno", self._auditar(
+            nmap, ssl_out="connect:errno=10060\n[EXIT rc=1] La herramienta terminó con error: openssl"))
+
+
+class TestAprobacionTrafico(unittest.TestCase):
+    """parse_tshark_output: captura válida, fallo, corte e IPs no globales."""
+
+    CAPTURA = (
+        "192.0.2.10\t93.184.216.34\t443\t\tTLSv1.2\n"
+        "192.0.2.10\t224.0.0.251\t\t5353\tMDNS\n"
+        "169.254.10.2\t192.0.2.10\t\t137\tNBNS\n"
+        "192.0.2.10\t255.255.255.255\t\t67\tDHCP\n"
+        "10.0.0.5\t8.8.8.8\t\t53\tDNS\n"
+    )
+    CASOS = {
+        "captura_valida": CAPTURA,
+        "error_sin_datos": "\n[ERROR]: [WinError 2] El sistema no puede encontrar el archivo especificado",
+        "interfaz_invalida": ("\n[STDERR]: Capturing on 'Wi-Fi'\ntshark: The capture session could not be "
+                              "initiated on interface 'Wi-Fi'\n\n[EXIT rc=2] La herramienta terminó con error: tshark"),
+        "timeout_con_datos": CAPTURA + "\n[TIMEOUT] Comando excedió 45s; resultados PARCIALES: tshark",
+        "sin_trafico_ok": "\n[STDERR]: Capturing on 'Ethernet'\n0 packets captured\n",
+    }
+
+    def test_estados_de_captura(self):
+        import hades_surveillance_advanced as vig
+        verify(self, "tshark_estados",
+               {k: vig.parse_tshark_output(v, ["192.0.2.10"]) for k, v in self.CASOS.items()})
+
+
+class TestAprobacionDescubrimientoYHostFallido(unittest.TestCase):
+
+    def test_descubrimiento_fallido_vs_sin_hosts(self):
+        import hades_surveillance_advanced as vig
+        casos = {
+            "sin_hosts_completo": "Starting Nmap 7.95\nNmap done: 256 IP addresses (0 hosts up) scanned in 9.1 seconds\n",
+            "timeout": "Starting Nmap 7.95\n\n[TIMEOUT] Comando excedió 600s; resultados PARCIALES: nmap -sn",
+            "binario_ausente": "[NMAP] Binario no encontrado en C:\\Program Files (x86)\\Nmap\\nmap.exe",
+            "rc_no_cero": "Starting Nmap 7.95\n\n[EXIT rc=1] La herramienta terminó con error: nmap",
+            "vacio": "",
+        }
+        verify(self, "descubrimiento_fallido", {k: vig.descubrimiento_fallido(v) for k, v in casos.items()})
+
+    def test_host_con_excepcion_no_desaparece_del_informe(self):
+        import hades_surveillance_advanced as vig
+        maestro = ("| Red objetivo | `192.0.2.0/24` |\n" +
+                   vig.bloque_host_fallido(IP, RuntimeError("fallo sintético")) +
+                   vig.bloque_host_fallido("192.0.2.11", RuntimeError("IA caída"),
+                                           f"\n{'=' * 60}\nOBJETIVO: 192.0.2.11\n{'=' * 60}\n[NMAP]\n"
+                                           "Nmap scan report for 192.0.2.11\nHost is up.\n22/tcp open ssh OpenSSH 9.6\n"))
+        data = informe.parse_master_report(maestro)
+        verify(self, "host_con_excepcion", [
+            {k: h[k] for k in ("ip", "status", "risk", "no_concluyente", "ports")} for h in data["hosts"]])
+
+
 class TestAprobacionSeguridadDashboard(unittest.TestCase):
     """El PTR de una IP remota es dato de un tercero: sólo hostnames válidos."""
 
