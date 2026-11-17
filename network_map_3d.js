@@ -301,12 +301,12 @@ class HadesGraph3D {
         }
 
         this._setupForces();
+        this._setupNavegacion();
 
         // Tamaño inicial y resize
         this._resize();
         window.addEventListener("resize", () => this._resize());
 
-        // La órbita automática se pausa mientras el usuario manipula el mapa.
         const touch = () => { this._lastInteraction = performance.now(); };
         ["pointerdown", "wheel", "touchstart"].forEach(ev =>
             this.container.addEventListener(ev, touch, { passive: true }));
@@ -321,6 +321,7 @@ class HadesGraph3D {
         this._buildPanel();
         this._buildStatsBar();
         this._buildLegend();
+        this._buildAyudaNavegacion();
 
         // Bucles de animación: cuadros (pulsos, cámara) y emisor de paquetes.
         this._lastFrame = performance.now();
@@ -862,6 +863,64 @@ class HadesGraph3D {
             const dist = Math.max((maxY - minY) / 2, (maxX - minX) / 2 / aspect) / tanMedio;
             this.graph.cameraPosition({ x: cx, y: cy, z: dist }, { x: cx, y: cy, z: 0 }, ms);
         } catch (e) { /* motor aún no listo */ }
+    }
+
+    // Navegación tipo mapa (el diagrama es plano: girar no aporta nada):
+    //   arrastrar (botón izq. o der.) = desplazar · rueda = zoom
+    //   flechas = desplazar · + / − = zoom   (con el mouse sobre el mapa)
+    _setupNavegacion() {
+        try {
+            const ctl = this.graph.controls();
+            if (ctl && ctl.mouseButtons && typeof THREE !== "undefined" && THREE.MOUSE) {
+                ctl.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+                ctl.noRotate = true;
+                ctl.panSpeed = 0.83;        // medido: 120 px de arrastre ≈ 120 px de desplazamiento
+                ctl.staticMoving = true;    // sin inercia: se detiene al soltar
+            }
+        } catch (e) { /* controles no disponibles */ }
+
+        this._mouseSobreMapa = false;
+        this.container.addEventListener("mouseenter", () => { this._mouseSobreMapa = true; });
+        this.container.addEventListener("mouseleave", () => { this._mouseSobreMapa = false; });
+        window.addEventListener("keydown", (e) => {
+            if (!this._mouseSobreMapa || e.ctrlKey || e.altKey || e.metaKey) return;
+            const tag = (document.activeElement && document.activeElement.tagName) || "";
+            if (tag === "INPUT" || tag === "TEXTAREA") return;
+            const dir = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[e.key];
+            if (dir) { this._desplazar(dir[0], dir[1]); e.preventDefault(); return; }
+            if (e.key === "+" || e.key === "=") { this._zoom(0.85); e.preventDefault(); }
+            else if (e.key === "-" || e.key === "_") { this._zoom(1 / 0.85); e.preventDefault(); }
+        });
+    }
+
+    // Mueve cámara y objetivo juntos (paneo puro), en pasos proporcionales al zoom.
+    _desplazar(dx, dy) {
+        if (!this.graph) return;
+        const cam = this.graph.camera(), ctl = this.graph.controls();
+        const paso = Math.max(4, Math.abs(cam.position.z - (ctl && ctl.target ? ctl.target.z : 0)) * 0.12);
+        cam.position.x += dx * paso; cam.position.y += dy * paso;
+        if (ctl && ctl.target) { ctl.target.x += dx * paso; ctl.target.y += dy * paso; }
+        this._lastInteraction = performance.now();
+    }
+
+    _zoom(factor) {
+        if (!this.graph) return;
+        const cam = this.graph.camera(), ctl = this.graph.controls();
+        const tz = ctl && ctl.target ? ctl.target.z : 0;
+        cam.position.z = tz + Math.max(20, (cam.position.z - tz) * factor);
+        this._lastInteraction = performance.now();
+    }
+
+    _buildAyudaNavegacion() {
+        if (document.getElementById("graphNavHelp")) return;
+        const box = document.createElement("div");
+        box.id = "graphNavHelp";
+        box.style.cssText = "position:absolute;bottom:34px;left:8px;z-index:5;pointer-events:none;" +
+            "background:rgba(0,0,0,.6);border:1px solid rgba(24,208,255,.2);border-radius:4px;" +
+            "padding:3px 7px;font-family:monospace;font-size:0.6rem;color:#7fb0c0;line-height:1.45";
+        box.textContent = "🖱 Arrastrar: mover · Rueda: zoom · ⌨ Flechas: mover · + / −: zoom · Centrar: vista completa";
+        const wrap = this.container.parentElement;
+        if (wrap) wrap.appendChild(box);
     }
 
     resetView() {
