@@ -37,7 +37,8 @@ HADES usa por defecto `HADES-SENTINEL-ANALYST:1.0.0`, un wrapper versionado
 sobre `dolphin3:latest` (Llama 3.1 8B, cuantización Q4_K_M). La configuración
 operativa está centralizada en `hades_ai.py`: endpoint
 `http://127.0.0.1:11434/api/generate`, contexto de 8192 tokens, salida máxima
-de 640 tokens, temperatura 0, sin reintentos y timeout de 180 segundos.
+de 640 tokens, temperatura 0, sin reintentos, streaming y límite de 300 segundos por análisis
+(1.200 por corrida); si se agota, se conserva el texto parcial.
 
 La IA es exclusivamente consultiva: no ejecuta acciones, no confirma CVE que
 no estén presentes literalmente en la evidencia y no altera hallazgos,

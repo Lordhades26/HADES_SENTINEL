@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import urllib.request
 
 from hades_ai import safe_subprocess_env
+from hades_processes import terminate_process_tree
 
 
 DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434"
@@ -106,10 +107,22 @@ def _spawn_ollama(args, **kwargs):
     return subprocess.Popen(args, **kwargs)
 
 
+def shutdown_owned_ollama():
+    """Cierra únicamente el Ollama que inició HADES; nunca uno ajeno."""
+    global _owned_process
+    process, _owned_process = _owned_process, None
+    if process is None or process.poll() is not None:
+        return
+    try:
+        terminate_process_tree(process, timeout=5)
+    except Exception:
+        pass
+
+
 def ensure_ollama_available(
     *,
     endpoint=DEFAULT_OLLAMA_ENDPOINT,
-    timeout_seconds=8.0,
+    timeout_seconds=45.0,
     source_env=None,
     probe: Optional[Callable] = None,
     port_busy: Optional[Callable] = None,
@@ -188,10 +201,23 @@ def ensure_ollama_available(
             "Ollama no pudo iniciarse con el entorno local seguro.",
         )
 
+    # Un Ollama propio anterior que siga vivo pero mudo no debe quedar huérfano.
+    shutdown_owned_ollama()
     _owned_process = process
     deadline = monotonic() + max(0.1, float(timeout_seconds))
     while monotonic() < deadline:
         if process.poll() is not None:
+            _owned_process = None
+            # Otro proceso pudo ganar el puerto entre la comprobación y el arranque.
+            try:
+                version_data = probe(endpoint)
+                return OllamaRuntimeStatus(
+                    "healthy",
+                    "Ollama local disponible.",
+                    version=str(version_data.get("version") or "") or None,
+                )
+            except Exception:
+                pass
             return OllamaRuntimeStatus(
                 "startup_failed",
                 "El proceso local de Ollama finalizó durante el arranque.",
@@ -207,6 +233,7 @@ def ensure_ollama_available(
         except Exception:
             wait(min(0.25, max(0.0, deadline - monotonic())))
 
+    shutdown_owned_ollama()
     return OllamaRuntimeStatus(
         "startup_failed",
         "Ollama no respondió dentro del tiempo de arranque permitido.",

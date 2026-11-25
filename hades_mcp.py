@@ -10,6 +10,7 @@ from hades_ai import (
     HADES_MODEL,
     OLLAMA_URL,
     build_generate_payload,
+    stream_generate,
     safe_subprocess_env,
 )
 from hades_validation import validate_in_scope
@@ -89,16 +90,11 @@ def ollama_query(model: str, prompt: str) -> str:
     'ollama run {model} "{prompt}"' con shell=True permitía inyección de comandos
     a través del prompt (comillas, &&, |). La API acepta el prompt como dato JSON."""
     try:
-        payload = json.dumps(
-            build_generate_payload(prompt, model=model)
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            OLLAMA_URL, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
+        data, parcial = stream_generate(
+            OLLAMA_URL, build_generate_payload(prompt, model=model), AI_TIMEOUT_SECONDS
         )
-        with urllib.request.urlopen(req, timeout=AI_TIMEOUT_SECONDS) as res:
-            data = json.loads(res.read().decode("utf-8"))
-        return data.get("response", "") or "[IA] Sin respuesta del modelo."
+        texto = data.get("response", "") or "[IA] Sin respuesta del modelo."
+        return texto + ("\n[IA] Respuesta parcial: se agotó el tiempo." if parcial else "")
     except Exception as e:
         return f"Error IA: {e}"
 

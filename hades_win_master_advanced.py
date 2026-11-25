@@ -16,6 +16,7 @@ from hades_ai import (
     build_generate_payload,
     format_consultative_output,
     safe_subprocess_env,
+    stream_generate,
 )
 from hades_validation import validate_target, validate_url, check_scope
 from hades_processes import terminate_process_tree
@@ -684,6 +685,16 @@ class HadesMCP:
         except Exception:
             return False
 
+    def _ollama_alive(self, timeout=3):
+        """/api/version responde aunque el modelo esté ocupado procesando."""
+        try:
+            base = WIN_PATHS["ollama"].rsplit("/api/", 1)[0]
+            with urllib.request.urlopen(base + "/api/version", timeout=timeout) as r:
+                r.read()
+            return True
+        except Exception:
+            return False
+
     def _record_ollama_metrics(self, model, data):
         """Extrae métricas REALES de la respuesta de Ollama (campos estándar de
         /api/generate con stream=false) y las persiste en .ollama_last_metrics.json
@@ -735,14 +746,13 @@ class HadesMCP:
         # llama directo con timeout acotado y se declara caído el servicio solo tras
         # agotar los intentos, decisión que vale para el resto de la corrida.
         # Contrato compartido: salida acotada, temperatura determinista y TTL corto.
-        payload = json.dumps(
-            build_generate_payload(prompt, model=model, num_predict=260)
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            WIN_PATHS["ollama"], data=payload,
-            headers={"Content-Type": "application/json"}
+        # keep_alive holgado: el Nmap de un host puede durar más de 5 min y recargar
+        # el modelo en cada host gastaba parte del tiempo de análisis.
+        payload = build_generate_payload(
+            prompt, model=model, num_predict=260, keep_alive="15m"
         )
         last = ""
+        lento = False
         inicio = time.time()
         max_attemptos = retries + 1
         i = 0
@@ -753,16 +763,24 @@ class HadesMCP:
             if restante <= 0:
                 break
             try:
-                with urllib.request.urlopen(req, timeout=min(timeout, max(1, int(restante)))) as res:
-                    data = json.loads(res.read().decode())
-                    self.ai_spent_seconds += time.time() - inicio
+                data, parcial = stream_generate(
+                    WIN_PATHS["ollama"], payload,
+                    min(timeout, max(1, int(restante))),
+                    opener=urllib.request.urlopen,
+                )
+                self.ai_spent_seconds += time.time() - inicio
+                if not parcial:
                     self._record_ollama_metrics(model, data)
-                    txt = strip_model_scaffolding(data.get("response", ""))
-                    if data.get("done_reason") == "length" and txt:
-                        txt += "\n[IA] Respuesta parcial: se alcanzó el límite de generación."
-                    return txt if txt else "[IA] Sin respuesta del modelo."
+                txt = strip_model_scaffolding(data.get("response", ""))
+                if parcial and txt:
+                    txt += "\n[IA] Respuesta parcial: se agotó el tiempo de análisis en este equipo."
+                elif data.get("done_reason") == "length" and txt:
+                    txt += "\n[IA] Respuesta parcial: se alcanzó el límite de generación."
+                return txt if txt else "[IA] Sin respuesta del modelo."
             except Exception as e:
                 last = str(e)
+                motivo = getattr(e, "reason", e)
+                lento = isinstance(motivo, TimeoutError)
                 # Ollama puede detener un runner al cargar el modelo y devolver
                 # HTTP 500; un segundo intento corto suele recuperarlo. No se
                 # reintenta automáticamente un timeout largo.
@@ -774,6 +792,12 @@ class HadesMCP:
                     time.sleep(self.AI_BACKOFF_SECONDS)
 
         self.ai_spent_seconds += time.time() - inicio
+        # Lento no es caído: si Ollama sigue respondiendo a /api/version, sólo este
+        # host se queda sin IA. El presupuesto global acota la espera acumulada.
+        if lento and self._ollama_alive():
+            log(f"IA local lenta: no alcanzó a responder en {int(timeout)}s. Se omite sólo en este análisis.", "WARN")
+            return (f"[IA] Análisis omitido (el modelo no respondió a tiempo tras {i} intento(s): "
+                    f"{last}; el servicio sigue activo). La auditoría técnica se conserva íntegra.")
         # Agotados los intentos, se declara el servicio caído para el resto de la
         # corrida: los hosts siguientes no vuelven a pagar la espera.
         self.ai_unavailable = True
@@ -1043,16 +1067,25 @@ class HadesMCP:
         # La identidad del activo (SNMP/NetBIOS) entra como hecho verificado: saber
         # que es un switch gestionable o una impresora cambia el impacto de negocio.
         bloque_identidad = self.bloque_perfil(perfil) if perfil else ""
+        # Los límites salen de una medición (24-11-2026): en CPU, 4.815 tokens de
+        # prompt tardaron 237 s hasta el primer token y la IA siempre expiraba.
+        # El informe técnico conserva la evidencia completa.
+        hechos_extracto = self.bloque_hechos(hechos)
+        if len(hechos_extracto) > 2000:
+            hechos_extracto = self._extracto_evidencia(
+                hechos_extracto, 2000,
+                re.compile(r"HECHOS VERIFICADOS|Debes referirte|Sistema operativo|Fabricante"),
+            )
         nmap_extracto = self._extracto_evidencia(
-            nmap_out, 5500,
+            nmap_out, 2000,
             re.compile(r"^\d{1,5}/(?:tcp|udp)\b|CVE-|VULNERABLE|vulnerab|TLSv|ssl-|OS details:|Running:|MAC Address:", re.I),
         )
         nuclei_extracto = self._extracto_evidencia(
-            "\n".join(nuclei_results), 5500,
+            "\n".join(nuclei_results), 2000,
             re.compile(r"\[(?:CRITICAL|HIGH|MEDIUM|LOW)\]|CVE-", re.I),
         )
         tls_extracto = self._extracto_evidencia(
-            "\n".join(f"{url}: {out}" for url, out in tls_results), 1200,
+            "\n".join(f"{url}: {out}" for url, out in tls_results), 800,
             re.compile(r"Verify return code:|subject=|issuer=|notBefore=|notAfter=|Cipher is|Protocol\s*:", re.I),
         )
         ai_prompt = (
@@ -1075,7 +1108,7 @@ class HadesMCP:
             "2) INCERTIDUMBRE/IMPACTO; 3) MITIGACIONES priorizadas. "
             "Si una fuente no muestra hallazgos, dilo sin atribuirle otros. "
             "La severidad oficial se calcula fuera de la IA.\n"
-            f"<hechos_nmap>\n{neutralizar_etiquetas(self.bloque_hechos(hechos))}\n"
+            f"<hechos_nmap>\n{neutralizar_etiquetas(hechos_extracto)}\n"
             f"{neutralizar_etiquetas(nmap_extracto)}\n</hechos_nmap>\n"
             + (f"<identidad_snmp_netbios>\n{neutralizar_etiquetas(bloque_identidad)}\n"
                "</identidad_snmp_netbios>\n" if bloque_identidad else "")

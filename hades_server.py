@@ -27,7 +27,7 @@ import urllib.request
 from urllib.parse import urlparse, unquote
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from hades_ai import safe_subprocess_env
-from hades_ollama_runtime import ensure_ollama_available
+from hades_ollama_runtime import ensure_ollama_available, shutdown_owned_ollama
 from hades_validation import validate_target, check_scope
 from hades_processes import terminate_process_tree
 import hmac
@@ -187,6 +187,7 @@ def _emergency_cleanup(reason="exit"):
     except Exception:
         pass
     _kill_active_tree()
+    shutdown_owned_ollama()
 
 def _signal_handler(signum, _frame):
     _emergency_cleanup(f"signal {signum}")
@@ -283,6 +284,31 @@ def _initialize_ollama_runtime(ensure_runtime=ensure_ollama_available):
     ollama_metrics["runtime_detail"] = status.detail
     return status
 
+class OllamaRecovery:
+    """Vuelve a levantar Ollama si cae con el dashboard abierto.
+
+    Exige dos fallas seguidas y respeta un enfriamiento para no insistir.
+    """
+
+    def __init__(self, ensure_runtime=ensure_ollama_available, cooldown=60):
+        self._ensure = ensure_runtime
+        self._cooldown = cooldown
+        self._failures = 0
+        self._last_attempt = None
+
+    def tick(self, connected, now):
+        if connected:
+            self._failures = 0
+            return None
+        self._failures += 1
+        if self._failures < 2:
+            return None
+        if self._last_attempt is not None and now - self._last_attempt < self._cooldown:
+            return None
+        self._last_attempt = now
+        return self._ensure()
+
+
 def _http_get_json(url, timeout=2.5):
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as res:
@@ -295,6 +321,7 @@ def monitor_ollama():
     encapsula en ollama_metrics['error']."""
     global ollama_metrics
     import time
+    recovery = OllamaRecovery()
     while True:
         snap = {
             "connected": False,
@@ -321,6 +348,19 @@ def monitor_ollama():
             snap["version"] = ver.get("version")
         except Exception as e:
             snap["error"] = f"version: {e.__class__.__name__}"
+
+        try:
+            status = recovery.tick(snap["connected"], time.monotonic())
+        except Exception:
+            status = None
+        if status is not None:
+            snap["runtime_state"], snap["runtime_detail"] = status.state, status.detail
+            snap["connected"] = status.state in ("healthy", "started")
+            if snap["connected"]:
+                snap["version"], snap["error"] = status.version, None
+        elif snap["connected"] and snap["runtime_state"] not in ("healthy", "started", "disabled"):
+            # Un fallo de arranque antiguo no debe seguir en pantalla si ya responde.
+            snap["runtime_state"], snap["runtime_detail"] = "healthy", "Ollama local disponible."
 
         if snap["connected"]:
             try:
@@ -944,6 +984,8 @@ class SecureHadesHandler(SimpleHTTPRequestHandler):
                 "expires_in_seconds": 0, "loaded_models": 0,
                 "tokens_per_second": 0.0, "total_duration_ms": 0,
                 "last_metric_age_seconds": None, "error": None,
+                "runtime_state": ollama_metrics.get("runtime_state", "not_checked"),
+                "runtime_detail": ollama_metrics.get("runtime_detail", ""),
             }
 
             if not tree_stopped:

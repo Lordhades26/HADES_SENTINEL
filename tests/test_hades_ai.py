@@ -26,9 +26,9 @@ class HadesAIConfigurationTests(unittest.TestCase):
             "http://127.0.0.1:11434/api/generate",
         )
         self.assertEqual(OLLAMA_URL, DEFAULT_OLLAMA_URL)
-        self.assertEqual(AI_TIMEOUT_SECONDS, 180)
+        self.assertEqual(AI_TIMEOUT_SECONDS, 300)
         self.assertEqual(AI_RETRIES, 0)
-        self.assertEqual(AI_BUDGET_SECONDS, 600)
+        self.assertEqual(AI_BUDGET_SECONDS, 1200)
         self.assertEqual(AI_BACKOFF_SECONDS, 3)
 
     def test_generate_payload_is_bounded_and_deterministic(self):

@@ -6,6 +6,7 @@ from hades_ai import (
     HADES_MODEL,
     OLLAMA_URL,
     build_generate_payload,
+    stream_generate,
     safe_subprocess_env,
 )
 from hades_ollama_runtime import ensure_ollama_available
@@ -124,12 +125,13 @@ class HadesEngine:
         model = model or HADES_MODEL
         payload = build_generate_payload(prompt, model=model)
         try:
-            import urllib.request
-            req = urllib.request.Request(self.ollama_url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=AI_TIMEOUT_SECONDS) as res:
-                data = json.loads(res.read().decode('utf-8'))
-            self._record_ollama_metrics(model, data)
-            return strip_model_scaffolding(data.get("response", ""))
+            data, parcial = stream_generate(self.ollama_url, payload, AI_TIMEOUT_SECONDS)
+            if not parcial:
+                self._record_ollama_metrics(model, data)
+            texto = strip_model_scaffolding(data.get("response", ""))
+            if parcial:
+                texto += "\n[IA] Respuesta parcial: se agotó el tiempo de análisis en este equipo."
+            return texto
         except Exception as e:
             return f"Error IA: {str(e)}"
 

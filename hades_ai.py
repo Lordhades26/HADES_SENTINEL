@@ -4,7 +4,10 @@ Este módulo no decide riesgo ni ejecuta acciones. Centraliza únicamente el
 cliente local de Ollama y el entorno mínimo permitido a procesos secundarios.
 """
 
+import json
 import os
+import time
+import urllib.request
 from urllib.parse import urlparse
 
 
@@ -57,9 +60,9 @@ except ValueError:
     OLLAMA_URL = DEFAULT_OLLAMA_URL
 
 HADES_MODEL = os.environ.get("HADES_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
-AI_TIMEOUT_SECONDS = _integer_setting("HADES_AI_TIMEOUT", 180, minimum=1)
+AI_TIMEOUT_SECONDS = _integer_setting("HADES_AI_TIMEOUT", 300, minimum=1)
 AI_RETRIES = _integer_setting("HADES_AI_RETRIES", 0, minimum=0)
-AI_BUDGET_SECONDS = _integer_setting("HADES_AI_BUDGET", 600, minimum=1)
+AI_BUDGET_SECONDS = _integer_setting("HADES_AI_BUDGET", 1200, minimum=1)
 AI_BACKOFF_SECONDS = _integer_setting("HADES_AI_BACKOFF", 3, minimum=0)
 
 
@@ -84,6 +87,48 @@ def build_generate_payload(
             "temperature": temperature,
         },
     }
+
+
+class OllamaResponseError(RuntimeError):
+    """Ollama informó un error dentro de una respuesta HTTP 200."""
+
+
+def stream_generate(url, payload, timeout, *, opener=None, monotonic=time.monotonic):
+    """Genera en streaming y devuelve ``(datos, parcial)``.
+
+    Sin streaming, una CPU lenta agotaba el límite y se perdía todo lo generado.
+    Al vencer ``timeout`` se corta la conexión (Ollama cancela la generación) y
+    se conserva el texto recibido; si aún no hay texto se propaga TimeoutError.
+    """
+    body = json.dumps({**payload, "stream": True}).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}
+    )
+    opener = urllib.request.urlopen if opener is None else opener
+    deadline = monotonic() + timeout
+    partes, final, completa = [], {}, False
+    try:
+        with opener(request, timeout=timeout) as response:
+            for line in response:
+                if not line.strip():
+                    continue
+                item = json.loads(line)
+                if item.get("error"):
+                    raise OllamaResponseError(str(item["error"])[:300])
+                partes.append(item.get("response") or "")
+                # Una respuesta única sin campo ``done`` también es completa.
+                if item.get("done", True):
+                    final, completa = item, True
+                    break
+                if monotonic() >= deadline:
+                    break
+    except OSError:
+        if not "".join(partes).strip():
+            raise
+    texto = "".join(partes)
+    if not completa and not texto.strip():
+        raise TimeoutError("timed out")
+    return {**final, "response": texto}, not completa
 
 
 def format_consultative_output(text):
