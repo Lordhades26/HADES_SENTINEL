@@ -4,17 +4,27 @@ HADES SENTINEL — Plan de pruebas ejecutable (Semana 6, Taller de Integracion e
 Seguridad de Datos).
 
 Bateria de pruebas de caja blanca sobre los modulos reales del agente:
-  - hades_auth.py     (WebAuthn / sesiones / storage HMAC)
   - hades_local.py    (motor CLI, saneo de objetivos, filtrado de IA)
-  - hades_server.py    (dashboard, parsers, normalizacion de host)
+  - hades_server.py   (dashboard, guardia de mismo origen, parsers)
+
+El dashboard ya no tiene inicio de sesion (se retiro WebAuthn / Windows Hello).
+El control de acceso que lo sustituye es la guardia de mismo origen del
+servidor, cubierta por INT-01, SEC-08 y SEC-09.
 
 Clasificacion de cada caso (ver informe):
   FN  = Funcional      SEC = Seguridad     INT = Integracion
   PERF= Rendimiento/estres            REG = Regresion (toda la suite)
 
 Ejecucion:
-    python -m pytest tests/test_hades_sentinel.py -v
-    python tests/test_hades_sentinel.py            # runner propio con log
+    python tests/run_all.py                 # SUITE COMPLETA (recomendado)
+    python tests/test_hades_sentinel.py     # solo este bloque, con log de evidencia
+    python -m pytest tests/ -v              # alternativa, si hay pytest instalado
+
+Usa `tests/run_all.py`: este archivo esta escrito con funciones sueltas
+(estilo pytest) y `python -m unittest discover` NO las descubre, asi que ese
+comando omitiria en silencio los 13 casos de aqui. El runner unico ejecuta
+tanto este bloque como las clases unittest del resto del directorio, sin
+depender de pytest (el agente debe poder verificarse en redes aisladas).
 
 El runner propio escribe evidencia con marca de tiempo en
 tests/evidence_run.log para adjuntar al informe.
@@ -22,66 +32,30 @@ tests/evidence_run.log para adjuntar al informe.
 import os
 import sys
 import time
-import json
 import types
-import tempfile
-import threading
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _ROOT)
 
-import hades_auth as auth          # noqa: E402
 import hades_local as local        # noqa: E402
 import hades_server as server      # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Fixtures manuales: aislar el storage de credenciales en un archivo temporal
-# para NO tocar el .hades_credentials.json real del usuario.
+# Helper: instanciar el handler HTTP sin abrir socket, para poder ejercitar la
+# guardia de mismo origen con headers arbitrarios (como los mandaria un
+# atacante desde el navegador de la victima).
 # ---------------------------------------------------------------------------
-def _isolate_storage():
-    tmpdir = tempfile.mkdtemp(prefix="hades_test_")
-    auth.CRED_FILE = os.path.join(tmpdir, ".hades_credentials.json")
-    # Sesiones y challenges en memoria: limpiarlos entre pruebas.
-    with auth._lock:
-        auth._sessions.clear()
-        auth._pending.clear()
-    return tmpdir
+def _handler_with_headers(**headers):
+    handler = server.SecureHadesHandler.__new__(server.SecureHadesHandler)
+    handler.headers = dict(headers)
+    return handler
 
 
 # ===========================================================================
 # FN — PRUEBAS FUNCIONALES
 # ===========================================================================
-def test_fn01_b64url_roundtrip():
-    """FN-01: codificacion base64url sin padding es reversible bit a bit."""
-    for raw in [b"", b"\x00", b"hades", os.urandom(32), os.urandom(65)]:
-        enc = auth._b64url_encode(raw)
-        assert "=" not in enc, "el encode no debe dejar padding"
-        assert auth._b64url_decode(enc) == raw
-
-
-def test_fn02_session_lifecycle():
-    """FN-02: crear -> validar -> revocar una sesion."""
-    _isolate_storage()
-    sid = auth.session_create()
-    assert auth.session_valid(sid) is True
-    auth.session_revoke(sid)
-    assert auth.session_valid(sid) is False
-    assert auth.session_valid(None) is False
-    assert auth.session_valid("inexistente") is False
-
-
-def test_fn03_credentials_roundtrip():
-    """FN-03: guardar y recuperar credenciales; has_credentials coherente."""
-    _isolate_storage()
-    assert auth.has_credentials() is False
-    creds = [{"credential_id": "abc", "public_key": "xyz", "sign_count": 0}]
-    auth._credentials_save(creds)
-    assert auth.has_credentials() is True
-    assert auth._credentials_load() == creds
-
-
 def test_fn04_normalize_ollama_host():
     """FN-04: normalizacion de OLLAMA_HOST a URL cliente valida."""
     n = server._normalize_ollama_host
@@ -114,30 +88,25 @@ def test_fn06_strip_scaffolding():
 
 
 def test_fn07_safe_target_accepts_valid():
-    """FN-07: objetivos legitimos (IP, host, CIDR) son aceptados."""
-    for t in ["127.0.0.1", "192.168.1.0/24", "router.local", "10.0.0.5"]:
-        assert local._safe_target(t) == t
+    """FN-07: objetivos legitimos (IP, host, CIDR) dentro del alcance son aceptados.
+
+    Desde el control de alcance (2026-11-17) un hostname se resuelve y su IP debe
+    estar en las redes autorizadas: aquí se simula el DNS para no depender de la red.
+    """
+    import socket
+    from unittest import mock
+    dns_falso = lambda host, *a, **k: [(socket.AF_INET, 0, 0, "", ("192.168.1.1", 0))]
+    with mock.patch("socket.getaddrinfo", dns_falso):
+        for t in ["127.0.0.1", "192.168.1.0/24", "router.local", "10.0.0.5"]:
+            assert local._safe_target(t) == t
+    # Fuera de alcance: IP pública y rango demasiado amplio.
+    for t in ["8.8.8.8", "10.0.0.0/8"]:
+        assert local._safe_target(t) is None
 
 
 # ===========================================================================
 # SEC — PRUEBAS DE SEGURIDAD
 # ===========================================================================
-def test_sec01_hmac_tamper_detection():
-    """SEC-01: alterar el archivo de credenciales invalida el HMAC y el
-    storage se trata como vacio (anti-inyeccion de credencial de atacante)."""
-    _isolate_storage()
-    auth._credentials_save([{"credential_id": "legit", "public_key": "k", "sign_count": 0}])
-    # Manipulacion directa en disco: inyectar credencial del atacante.
-    with open(auth.CRED_FILE, "r", encoding="utf-8") as f:
-        wrapper = json.load(f)
-    wrapper["data"].append({"credential_id": "atacante", "public_key": "evil", "sign_count": 0})
-    with open(auth.CRED_FILE, "w", encoding="utf-8") as f:
-        json.dump(wrapper, f)
-    # El HMAC ya no cuadra -> load devuelve [].
-    assert auth._credentials_load() == []
-    assert auth.has_credentials() is False
-
-
 def test_sec02_command_injection_rejected():
     """SEC-02: objetivos con metacaracteres de shell son rechazados antes de
     interpolarse en un comando con shell=True."""
@@ -154,87 +123,6 @@ def test_sec02_command_injection_rejected():
         assert local._safe_target(p) is None, f"deberia rechazar: {p!r}"
 
 
-def test_sec03_challenge_single_use():
-    """SEC-03: un challenge de registro se consume una sola vez (anti-replay)."""
-    _isolate_storage()
-    res = auth.begin_registration()
-    chal_id = res["challenge_id"]
-    assert chal_id in auth._pending
-    # Consumir (fallara la verificacion cripto, pero el challenge se elimina).
-    try:
-        auth.complete_registration(chal_id, {"bogus": True})
-    except Exception:
-        pass
-    assert chal_id not in auth._pending, "el challenge debe eliminarse tras el intento"
-    # Segundo uso del mismo challenge -> rechazado.
-    try:
-        auth.complete_registration(chal_id, {"bogus": True})
-        raise AssertionError("no debio aceptar un challenge reutilizado")
-    except ValueError:
-        pass
-
-
-def test_sec04_challenge_ttl_expira():
-    """SEC-04: un challenge caducado se rechaza."""
-    _isolate_storage()
-    res = auth.begin_authentication_safe()
-    if res is None:
-        # No hay credenciales -> generamos un pending de login manual caducado.
-        chal_id = "expirado"
-        with auth._lock:
-            auth._pending[chal_id] = {"type": "login", "challenge": b"x",
-                                      "expires_at": time.time() - 1}
-    else:
-        chal_id = res["challenge_id"]
-        with auth._lock:
-            auth._pending[chal_id]["expires_at"] = time.time() - 1
-    try:
-        auth.complete_authentication(chal_id, {"id": "x"})
-        raise AssertionError("no debio aceptar un challenge caducado")
-    except ValueError:
-        pass
-
-
-def test_sec05_registration_requires_session_when_enrolled():
-    """SEC-05: si ya hay un dispositivo, re-registrar exige sesion valida
-    (no un atacante anonimo)."""
-    _isolate_storage()
-    auth._credentials_save([{"credential_id": "legit", "public_key": "k", "sign_count": 0}])
-    try:
-        auth.begin_registration(authenticated_sid=None)
-        raise AssertionError("no debio permitir registro anonimo con equipo ya enrolado")
-    except PermissionError:
-        pass
-    # Con sesion valida, si se permite.
-    sid = auth.session_create()
-    out = auth.begin_registration(authenticated_sid=sid)
-    assert "challenge_id" in out
-
-
-def test_sec06_user_verification_required():
-    """SEC-06: el diseno documentado exige 'User verification REQUIRED'
-    (biometria/PIN, no solo presencia). Las opciones WebAuthn de registro y
-    login deben pedir userVerification = 'required'."""
-    _isolate_storage()
-    reg = auth.begin_registration()
-    uv_reg = reg["options"]["authenticatorSelection"]["userVerification"]
-    assert uv_reg == "required", (
-        f"registro pide userVerification='{uv_reg}', se esperaba 'required' "
-        "(ver docstring de hades_auth.py)")
-
-    # credential_id/public_key deben ser base64url validos: begin_authentication
-    # los decodifica para construir allow_credentials.
-    auth._credentials_save([{
-        "credential_id": auth._b64url_encode(b"credencial-legitima"),
-        "public_key": auth._b64url_encode(os.urandom(64)),
-        "sign_count": 0,
-    }])
-    login = auth.begin_authentication()
-    uv_login = login["options"]["userVerification"]
-    assert uv_login == "required", (
-        f"login pide userVerification='{uv_login}', se esperaba 'required'")
-
-
 def test_sec07_prompt_injection_scaffolding_defense():
     """SEC-07: aunque la salida del modelo incluya andamiaje o intente cerrar
     el bloque de datos, strip_model_scaffolding no filtra el razonamiento."""
@@ -248,20 +136,56 @@ def test_sec07_prompt_injection_scaffolding_defense():
     assert "Consejo legitimo." in out
 
 
+def test_sec08_csrf_cross_origin_rechazado():
+    """SEC-08: retirado el login, el riesgo que aparece es el CSRF — una web
+    cualquiera que el usuario visite le pide a SU navegador que dispare un
+    escaneo contra 127.0.0.1:8080. El navegador delata el Origin ajeno en todo
+    POST (fetch, XHR y formularios) y la guardia lo corta."""
+    hostiles = [
+        "https://evil.com",
+        "http://evil.com",
+        "http://localhost:9999",          # otro puerto = otro origen
+        "https://localhost:8080",         # otro esquema = otro origen
+        "http://127.0.0.1.evil.com",      # prefijo enganioso
+        "null",                           # iframe sandboxed
+    ]
+    for origen in hostiles:
+        h = _handler_with_headers(Host=f"127.0.0.1:{server.PORT}", Origin=origen)
+        assert h._request_allowed() is False, f"deberia rechazar Origin: {origen!r}"
+
+
+def test_sec09_dns_rebinding_host_rechazado():
+    """SEC-09: DNS rebinding — el atacante hace que evil.com resuelva a
+    127.0.0.1, con lo que su pagina pasa a ser 'mismo origen' que el agente y
+    el Origin ya no lo delata. Lo que no puede falsear es el Host, que llega
+    con su dominio. Solo se aceptan Hosts loopback."""
+    hostiles = [
+        "evil.com",
+        f"evil.com:{server.PORT}",
+        f"192.168.1.50:{server.PORT}",     # IP LAN del equipo
+        f"hades.local:{server.PORT}",
+        "",                               # Host ausente
+    ]
+    for host in hostiles:
+        h = _handler_with_headers(Host=host)
+        assert h._request_allowed() is False, f"deberia rechazar Host: {host!r}"
+
+
 # ===========================================================================
 # INT — PRUEBAS DE INTEGRACION
 # ===========================================================================
-def test_int01_cookie_session_bridge():
-    """INT-01: el parser de cookie del servidor recupera el SID que emite el
-    modulo de auth (contrato auth <-> server)."""
-    _isolate_storage()
-    sid = auth.session_create()
+def test_int01_guardia_admite_al_dashboard():
+    """INT-01: contrato dashboard <-> server. La guardia que sustituye al login
+    debe dejar pasar al propio dashboard (Origin loopback) y a las herramientas
+    locales del usuario (curl/scripts, que no mandan Origin), sin pedir nada."""
+    for host in [f"localhost:{server.PORT}", f"127.0.0.1:{server.PORT}"]:
+        # El dashboard llamando a sus APIs por fetch.
+        h = _handler_with_headers(Host=host, Origin=f"http://{host}")
+        assert h._request_allowed() is True, f"deberia admitir al dashboard en {host}"
 
-    handler = server.SecureHadesHandler.__new__(server.SecureHadesHandler)
-    handler.headers = {"Cookie": f"otra=1; HADES_SID={sid}; x=2"}
-    parsed = handler._get_cookie_sid()
-    assert parsed == sid
-    assert auth.session_valid(parsed) is True
+        # Navegacion directa / curl: sin header Origin.
+        h = _handler_with_headers(Host=host)
+        assert h._request_allowed() is True, f"deberia admitir peticion local en {host}"
 
 
 def test_int02_report_to_graph_pipeline():
@@ -291,42 +215,20 @@ def test_int03_end_to_end_status_no_crash():
 # ===========================================================================
 # PERF — PRUEBAS DE RENDIMIENTO / ESTRES
 # ===========================================================================
-def test_perf01_session_store_scale():
-    """PERF-01: 10.000 sesiones creadas y validadas; la busqueda debe ser
-    O(1) amortizado (< 1 ms promedio)."""
-    _isolate_storage()
+def test_perf01_guardia_en_ruta_caliente():
+    """PERF-01: la guardia corre en CADA peticion (el dashboard hace polling de
+    logs/status/sysinfo/graph). Debe ser despreciable: < 0,05 ms por llamada."""
     N = 10000
-    sids = [auth.session_create() for _ in range(N)]
+    h = _handler_with_headers(
+        Host=f"127.0.0.1:{server.PORT}", Origin=f"http://127.0.0.1:{server.PORT}"
+    )
     t0 = time.perf_counter()
-    for sid in sids:
-        assert auth.session_valid(sid)
+    for _ in range(N):
+        assert h._request_allowed()
     dt = time.perf_counter() - t0
     avg_ms = (dt / N) * 1000
-    assert avg_ms < 1.0, f"latencia de validacion demasiado alta: {avg_ms:.4f} ms"
-    print(f"[PERF-01] {N} validaciones en {dt*1000:.1f} ms ({avg_ms:.5f} ms/op)")
-
-
-def test_perf02_concurrent_sessions_threadsafe():
-    """PERF-02: 50 hilos creando sesiones en paralelo no corrompen el store
-    (el _lock protege la seccion critica)."""
-    _isolate_storage()
-    created = []
-    errors = []
-
-    def worker():
-        try:
-            for _ in range(200):
-                created.append(auth.session_create())
-        except Exception as e:  # pragma: no cover
-            errors.append(e)
-
-    threads = [threading.Thread(target=worker) for _ in range(50)]
-    [t.start() for t in threads]
-    [t.join() for t in threads]
-    assert not errors, f"errores de concurrencia: {errors[:3]}"
-    assert len(created) == 50 * 200
-    assert len(set(created)) == len(created), "SIDs duplicados: colision insegura"
-    print(f"[PERF-02] {len(created)} sesiones concurrentes, 0 colisiones")
+    assert avg_ms < 0.05, f"la guardia cuesta demasiado: {avg_ms:.5f} ms/op"
+    print(f"[PERF-01] {N} evaluaciones en {dt*1000:.1f} ms ({avg_ms:.5f} ms/op)")
 
 
 def test_perf03_parser_large_input():
@@ -340,17 +242,6 @@ def test_perf03_parser_large_input():
     dt = time.perf_counter() - t0
     assert dt < 2.0, f"parser demasiado lento: {dt:.3f} s"
     print(f"[PERF-03] 5000 lineas en {dt*1000:.1f} ms, {len(connections)} conexiones")
-
-
-# ---------------------------------------------------------------------------
-# Compatibilidad: helper usado por SEC-04 sin romper si no hay credenciales.
-# ---------------------------------------------------------------------------
-def _begin_authentication_safe():
-    try:
-        return auth.begin_authentication()
-    except Exception:
-        return None
-auth.begin_authentication_safe = _begin_authentication_safe
 
 
 # ===========================================================================

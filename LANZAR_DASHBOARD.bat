@@ -78,15 +78,9 @@ echo  No se lanza un segundo servidor. Reabriendo el navegador en la
 echo  sesion activa...
 echo =============================================================
 echo.
-set HADES_TOKEN=
-if exist "%SCRIPT_DIR%.hades_token" set /p HADES_TOKEN=<"%SCRIPT_DIR%.hades_token"
-if defined HADES_TOKEN (
-    start "" "http://127.0.0.1:8080/index.html?token=%HADES_TOKEN%"
-) else (
-    start "" "http://127.0.0.1:8080/index.html"
-)
+start "" "http://127.0.0.1:8080/index.html"
 echo Si el navegador no abrio, visita manualmente:
-echo   http://127.0.0.1:8080/index.html?token=%HADES_TOKEN%
+echo   http://127.0.0.1:8080/index.html
 echo.
 echo Para DETENER el dashboard, cierra su ventana de servidor original.
 pause

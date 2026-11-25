@@ -1,0 +1,119 @@
+{
+  "date": "2026-11-17 10:00",
+  "devices": "2",
+  "hosts": [
+    {
+      "control_ia": "- El análisis IA no menciona el/los puerto(s) 3306.",
+      "cves_confirmados": [
+        "CVE-2017-5638",
+        "CVE-2021-41773"
+      ],
+      "device_type": "Impresora",
+      "ip": "192.0.2.10",
+      "latency": "3.1 ms",
+      "mac": "00:11:22:33:44:55",
+      "no_concluyente": [],
+      "nuclei": [
+        "[CRITICAL] Apache 2.4.49 Path Traversal [CVE-2021-41773] → http://192.0.2.10/cgi-bin/.%2e/etc/passwd",
+        "[INFO] HTTP Missing Security Headers → http://192.0.2.10"
+      ],
+      "os": "Linux 2.6.32 - 3.10",
+      "ports": [
+        {
+          "port": "22",
+          "proto": "tcp",
+          "service": "ssh",
+          "version": "OpenSSH 7.4 (protocol 2.0)"
+        },
+        {
+          "port": "80",
+          "proto": "tcp",
+          "service": "http",
+          "version": "Apache httpd 2.4.6 ((CentOS))"
+        },
+        {
+          "port": "443",
+          "proto": "tcp",
+          "service": "ssl/http",
+          "version": "Apache httpd 2.4.6"
+        },
+        {
+          "port": "3306",
+          "proto": "tcp",
+          "service": "mysql",
+          "version": "MySQL 5.5.62"
+        }
+      ],
+      "risk": "CRÍTICO",
+      "status": "activo",
+      "texto_ia": "Apache desactualizado; revisar TLSv1.0.",
+      "tls": [
+        "|   TLSv1.0:",
+        "Objetivo: 192.0.2.10:443",
+        "Verify return code: 10 (certificate has expired)"
+      ],
+      "traceroute": [
+        {
+          "hop": "1",
+          "ip": "192.0.2.10",
+          "rtt": "3.10 ms"
+        }
+      ],
+      "vendor": "Hewlett Packard"
+    },
+    {
+      "control_ia": "",
+      "cves_confirmados": [],
+      "device_type": "Host sin servicios expuestos",
+      "ip": "198.51.100.7",
+      "latency": "10.0 ms",
+      "mac": "",
+      "no_concluyente": [
+        "Nuclei: [ERROR]: [WinError 2] El sistema no puede encontrar el archivo especificado"
+      ],
+      "nuclei": [],
+      "os": "",
+      "ports": [],
+      "risk": "INFORMATIVO",
+      "status": "activo (todos los puertos filtrados)",
+      "texto_ia": "",
+      "tls": [],
+      "traceroute": [],
+      "vendor": ""
+    },
+    {
+      "control_ia": "",
+      "cves_confirmados": [],
+      "device_type": "Desconocido",
+      "ip": "198.51.100.8",
+      "latency": "",
+      "mac": "",
+      "no_concluyente": [
+        "Nmap: la exploración no terminó; no hay evidencia para clasificar el activo.",
+        "TLS: sin respuesta o error de conexión en 198.51.100.8:443; certificado y protocolo NO verificados."
+      ],
+      "nuclei": [],
+      "os": "",
+      "ports": [],
+      "risk": "NO EVALUADO",
+      "status": "no evaluado (Nmap falló o se cortó por tiempo)",
+      "texto_ia": "",
+      "tls": [
+        "Objetivo: 198.51.100.8:443"
+      ],
+      "traceroute": [],
+      "vendor": ""
+    }
+  ],
+  "ips_raw": "192.0.2.10, 198.51.100.7",
+  "subnet": "192.0.2.0/24",
+  "tools": {
+    "Nmap": true,
+    "Nuclei": true,
+    "Ollama": false,
+    "OpenSSL": true,
+    "Tshark": false
+  },
+  "traffic_ai": "",
+  "traffic_summary": "TCP 70 %, UDP 30 %"
+}

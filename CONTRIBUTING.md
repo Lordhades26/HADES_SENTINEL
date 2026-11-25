@@ -91,7 +91,7 @@ We use **[Conventional Commits](https://www.conventionalcommits.org/)**. Format:
 **Good examples** (from this repo's history):
 
 ```
-feat(auth): autenticacion biometrica WebAuthn (Windows Hello) + cierre limpio total
+feat(server): guardia de mismo origen contra CSRF y DNS rebinding en las APIs
 fix(dashboard): polling /api/graph cada 5s para refrescar el mapa en vivo
 fix(ollama): deteccion robusta de host + metricas IA reales del agente
 ```

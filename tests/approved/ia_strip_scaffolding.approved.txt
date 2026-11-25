@@ -1,0 +1,5 @@
+{
+  "cerrado": "Respuesta final.",
+  "huerfano": "Texto útil.",
+  "limpio": "Sin andamiaje."
+}

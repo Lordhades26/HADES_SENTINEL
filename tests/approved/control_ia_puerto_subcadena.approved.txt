@@ -1,0 +1,6 @@
+{
+  "menciona_80": [],
+  "solo_8080_y_2018": [
+    "El análisis IA no menciona el/los puerto(s) 80 detectado(s) por el escaneo."
+  ]
+}

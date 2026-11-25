@@ -1,0 +1,7 @@
+{
+  "binario_ausente": true,
+  "rc_no_cero": true,
+  "sin_hosts_completo": false,
+  "timeout": true,
+  "vacio": true
+}

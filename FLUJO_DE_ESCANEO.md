@@ -112,7 +112,7 @@ Para cada host objetivo seleccionado, se lanza una auditoría en 4 etapas:
 * **Comando:** `echo | "C:\Program Files\OpenSSL-Win64\bin\openssl.exe" s_client -connect <IP>:<Port> -showcerts`
 
 ### 4️⃣ Análisis e Informe de IA Local (ISO 27001)
-* **Objetivo:** Consolidar todos los logs anteriores (Nmap + Nuclei + SSL) y enviárselos al motor de IA local (Ollama) para que actúe como un auditor certificado ISO 27001 y genere recomendaciones en lenguaje humano.
+* **Objetivo:** Consolidar la evidencia obtenida por Nmap, Nuclei y OpenSSL y entregarla al modelo local Ollama para redactar un comentario consultivo. ISO/IEC 27001:2022 se usa como referencia de controles; la IA no es un auditor certificado ni decide la conformidad del cliente.
 
 ---
 

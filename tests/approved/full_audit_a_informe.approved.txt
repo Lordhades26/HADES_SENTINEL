@@ -1,0 +1,19 @@
+{
+  "nmap_timeout": {
+    "impacto": "No evaluado: la exploración falló o se cortó; repetir la auditoría de este activo antes de concluir sobre su riesgo.",
+    "no_concluyente": [
+      "Nmap: la exploración no terminó; no hay evidencia para clasificar el activo.",
+      "Nuclei: [NUCLEI] OMITIDO en 192.0.2.10: Nmap no entregó un resultado válido, no se pudieron identificar servicios web ni TLS. Resultado NO concluyente (no equivale a «sin hallazgos»)."
+    ],
+    "risk": "NO EVALUADO",
+    "status": "no evaluado (Nmap falló o se cortó por tiempo)"
+  },
+  "tls_errno": {
+    "impacto": "Riesgo de exposición de servicios en la red interna.",
+    "no_concluyente": [
+      "TLS: sin respuesta o error de conexión en https://192.0.2.10; certificado y protocolo NO verificados."
+    ],
+    "risk": "BAJO",
+    "status": "activo"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "extracto_nmap_300": "Nmap scan report for 192.0.2.10\n22/tcp   open     ssh           OpenSSH 7.4 (protocol 2.0)\n80/tcp   open     http          Apache httpd 2.4.6 ((CentOS))\n|   VULNERABLE: CVE-2017-5638 Apache Struts\n443/tcp  open     ssl/http      Apache httpd 2.4.6\n3306/tcp open     mysql         MySQL 5.5.62\n[Fuente resumida: 15 líneas omitidas; consultar informe técnico completo.]",
+  "tls": "subject=CN = intranet.example\nissuer=CN = intranet.example\nnotBefore=Jan  1 00:00:00 2019 GMT\nnotAfter=Jan  1 00:00:00 2020 GMT\nNew, TLSv1.0, Cipher is ECDHE-RSA-AES128-SHA\nVerify return code: 10 (certificate has expired)"
+}

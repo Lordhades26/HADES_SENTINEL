@@ -13,23 +13,12 @@ MARKETING/
 signature.local.json
 assets/qr_credly.png
 
-# ─── Temporales / logs / token de sesión ─────────────────────────────────────
+# ─── Temporales / logs ───────────────────────────────────────────────────────
 *.log
-.scan_token
-.hades_token
 .ollama_last_metrics.json
 hades_run.out
 hades_run.err
 *.tmp
-
-# ─── WebAuthn — secretos del DISPOSITIVO del usuario, NO PUBLICAR ────────────
-# .hades_credentials.json: credentials WebAuthn registradas (clave publica del
-#   dispositivo + HMAC). Aunque la clave publica no es secreta criptograficamente,
-#   identifica unicamente al equipo del duenio.
-# .hades_machine_salt: salt aleatoria que firma el HMAC del archivo de
-#   credentials — si se filtra, un atacante podria forjar credentials validas.
-.hades_credentials.json
-.hades_machine_salt
 
 # ─── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
@@ -46,3 +35,21 @@ desktop.ini
 # Build temporal del mapa (esbuild)
 _mapbuild/
 node_modules/
+
+# Tests de aprobación: salidas pendientes de revisar (no se versionan)
+tests/approved/*.received.txt
+
+# Token de sesión del dashboard (se genera en cada arranque; nunca versionar)
+.hades_token
+
+# ─── Documentos internos de trabajo: se conservan sólo en local ──────────────
+/handoff.md
+/docs/superpowers/
+/ANALISIS_*.md
+/AUDITORIA_*.md
+/MEJORAS_SEGURAS_*.md
+/PLAN_CORRECCION_*.md
+/PRODUCCION_READINESS.md
+/REPARACION*.md
+/REVERSING_*.md
+/REVISION_EJECUCION_*.md

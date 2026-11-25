@@ -1,22 +1,25 @@
 import json
-import re
 import subprocess
 import sys
 import shutil
 import os
 import urllib.request
 from typing import Dict, Optional
+from hades_ai import (
+    AI_TIMEOUT_SECONDS,
+    HADES_MODEL,
+    OLLAMA_URL,
+    build_generate_payload,
+    stream_generate,
+    safe_subprocess_env,
+)
+from hades_validation import validate_in_scope
 
-# Modelo IA centralizado (sobrescribible por entorno). Default HADES-DOLPHIN.
-HADES_MODEL = os.environ.get("HADES_MODEL", "HADES-DOLPHIN:latest")
-OLLAMA_URL = os.environ.get("HADES_OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
-
-# Validación de objetivos antes de pasarlos a un comando con shell=True.
-_TARGET_RE = re.compile(r"^[A-Za-z0-9._:/-]+$")
+# HADES_MODEL y OLLAMA_URL se reexportan por compatibilidad.
 
 def _safe_target(value: str) -> Optional[str]:
-    s = str(value).strip()
-    return s if _TARGET_RE.match(s) else None
+    # Un agente LLM decide el objetivo: además de válido, debe estar en alcance.
+    return validate_in_scope(value, cidr_ok=True, allow_url=True)
 
 # Common Windows paths for security tools
 WIN_PATHS = [
@@ -66,11 +69,17 @@ def run_tool(tool: str, args: str):
                 cmd = f'"{perl}" "{tool_exe}" {args}'
             else:
                 cmd = f'"{tool_exe}" {args}'
-            res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300, encoding='utf-8', errors='replace')
+            res = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, timeout=300,
+                encoding='utf-8', errors='replace', env=safe_subprocess_env()
+            )
         else:
             import shlex
             cmd = [tool_exe] + shlex.split(args)
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            res = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300,
+                env=safe_subprocess_env()
+            )
             
         return res.stdout if res.returncode == 0 else (res.stdout + res.stderr)
     except Exception as e:
@@ -81,18 +90,11 @@ def ollama_query(model: str, prompt: str) -> str:
     'ollama run {model} "{prompt}"' con shell=True permitía inyección de comandos
     a través del prompt (comillas, &&, |). La API acepta el prompt como dato JSON."""
     try:
-        payload = json.dumps({
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            OLLAMA_URL, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
+        data, parcial = stream_generate(
+            OLLAMA_URL, build_generate_payload(prompt, model=model), AI_TIMEOUT_SECONDS
         )
-        with urllib.request.urlopen(req, timeout=120) as res:
-            data = json.loads(res.read().decode("utf-8"))
-        return data.get("response", "") or "[IA] Sin respuesta del modelo."
+        texto = data.get("response", "") or "[IA] Sin respuesta del modelo."
+        return texto + ("\n[IA] Respuesta parcial: se agotó el tiempo." if parcial else "")
     except Exception as e:
         return f"Error IA: {e}"
 

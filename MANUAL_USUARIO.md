@@ -50,7 +50,7 @@ Para que HADES ejecute todas las herramientas en Windows de manera nativa, aseg�
 | **Ollama (IA)** | Red Neuronal Local para análisis automatizado. | Escucha en: `http://127.0.0.1:11434` |
 
 > [!NOTE]
-> Si has instalado alguna herramienta en una ruta no estándar, puedes ajustar la variable `WIN_PATHS` directamente en el archivo [hades_win_master_advanced.py](file:///c:/Users/DELL%205420/Desktop/HADES%20ECOSYSTEM/ediciones%20hades%20free/hades_win_master_advanced.py).
+> Si has instalado alguna herramienta en una ruta no estándar, puedes ajustar la variable `WIN_PATHS` directamente en el archivo [hades_win_master_advanced.py](hades_win_master_advanced.py).
 
 ### Configuración del Modelo de Inteligencia Artificial (Ollama)
 HADES utiliza por defecto el modelo local `HADES-AUTO:latest` (o un fallback similar como `llama3` o `qwen2.5`). 
@@ -70,7 +70,7 @@ Para levantar el servidor de IA local:
 
 ### Opción A: Lanzamiento Automático con Doble Clic (Recomendado)
 1. Conecta tu pendrive o sitúate en la carpeta del proyecto.
-2. Haz doble clic sobre el archivo **[LANZAR_HADES.bat](file:///c:/Users/DELL%205420/Desktop/HADES%20ECOSYSTEM/ediciones%20hades%20free/LANZAR_HADES.bat)**.
+2. Haz doble clic sobre el archivo **[LANZAR_HADES.bat](LANZAR_HADES.bat)**.
 3. Se abrirá una consola interactiva con el banner de HADES que:
    * Detectará automáticamente la versión de Python instalada.
    * **Autodetectará tu red local** actual resolviendo tu IP de red.
@@ -96,7 +96,7 @@ python hades_win_master_advanced.py nmap 192.168.1.1
 
 ### Opción C: Detención de Emergencia de Procesos (Fuerza Bruta)
 Si necesitas cancelar inmediatamente las auditorías, las capturas de Tshark demoran demasiado o deseas suspender todas las actividades de seguridad de forma instantánea sin dejar procesos huérfanos en segundo plano:
-1. Haz doble clic sobre el archivo **[DETENER_HADES.bat](file:///c:/Users/DELL%205420/Desktop/HADES%20ECOSYSTEM/ediciones%20hades%20free/DETENER_HADES.bat)**.
+1. Haz doble clic sobre el archivo **[DETENER_HADES.bat](DETENER_HADES.bat)**.
 2. El script forzará el cierre inmediato y limpio de todos los binarios activos en segundo plano (`nmap.exe`, `tshark.exe`, `nuclei.exe`, `openssl.exe`, `python.exe`, `pythonw.exe`).
 
 ### Opción D: Centro de Control Web Táctico (Dashboard Inteligente)

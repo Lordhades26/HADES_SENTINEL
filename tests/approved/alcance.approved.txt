@@ -1,0 +1,82 @@
+{
+  "HADES_ALCANCE=198.51.100.0/24": {
+    "192.168.1.0/24": [
+      false,
+      "192.168.1.0/24 fuera del alcance autorizado (HADES_ALCANCE)"
+    ],
+    "198.51.100.0/24": [
+      true,
+      ""
+    ],
+    "198.51.100.7": [
+      true,
+      ""
+    ]
+  },
+  "por_defecto": {
+    "-oN x": [
+      false,
+      "objetivo inválido"
+    ],
+    "0.0.0.0/0": [
+      false,
+      "rango demasiado amplio (/0; mínimo /16)"
+    ],
+    "10.0.0.0/8": [
+      false,
+      "rango demasiado amplio (/8; mínimo /16)"
+    ],
+    "10.77.0.0/16": [
+      true,
+      ""
+    ],
+    "100.64.1.1": [
+      true,
+      ""
+    ],
+    "169.254.1.1": [
+      true,
+      ""
+    ],
+    "192.168.1.0/24": [
+      true,
+      ""
+    ],
+    "198.51.100.0/24": [
+      false,
+      "198.51.100.0/24 fuera del alcance autorizado (HADES_ALCANCE)"
+    ],
+    "2001:db8::1": [
+      false,
+      "2001:db8::1 fuera del alcance autorizado (HADES_ALCANCE)"
+    ],
+    "8.8.8.8": [
+      false,
+      "8.8.8.8 fuera del alcance autorizado (HADES_ALCANCE)"
+    ],
+    "auto": [
+      true,
+      ""
+    ],
+    "fd00::/64": [
+      true,
+      ""
+    ],
+    "intranet.example": [
+      true,
+      ""
+    ],
+    "mixto.example": [
+      false,
+      "mixto.example resuelve a 8.8.8.8, fuera del alcance autorizado"
+    ],
+    "noexiste.example": [
+      false,
+      "no se pudo resolver noexiste.example"
+    ],
+    "publico.example": [
+      false,
+      "publico.example resuelve a 93.184.216.34, fuera del alcance autorizado"
+    ]
+  }
+}

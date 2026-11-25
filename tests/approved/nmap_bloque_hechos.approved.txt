@@ -1,0 +1,9 @@
+HECHOS VERIFICADOS POR LAS HERRAMIENTAS (no los contradigas ni los omitas):
+  - Puerto 22/tcp: estado open, servicio ssh, version detectada: OpenSSH 7.4 (protocol 2.0)
+  - Puerto 80/tcp: estado open, servicio http, version detectada: Apache httpd 2.4.6 ((CentOS))
+  - Puerto 443/tcp: estado open, servicio ssl/http, version detectada: Apache httpd 2.4.6
+  - Puerto 445/tcp: estado filtered, servicio microsoft-ds
+  - Puerto 3306/tcp: estado open, servicio mysql, version detectada: MySQL 5.5.62
+  - Sistema operativo detectado: Linux 2.6.32 - 3.10
+  - Fabricante del equipo (MAC 00:11:22:33:44:55): Hewlett Packard
+Debes referirte a CADA uno de los puertos listados, incluidos los filtrados, y considerar la antiguedad real de las versiones y del sistema operativo al justificar la severidad.

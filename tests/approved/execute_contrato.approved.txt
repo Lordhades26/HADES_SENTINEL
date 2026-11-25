@@ -1,0 +1,5 @@
+{
+  "ok": "1\n",
+  "rc_no_cero_con_stderr": "\n[STDERR]: fallo\n\n[EXIT rc=3] La herramienta terminó con error: \"<python>\" -c \"import sys; sys.stderr.write('fallo\\n'); sys.exit(3)\"",
+  "timeout_con_parcial": "parcial\n\n[STDERR]: aviso\n\n[TIMEOUT] Comando excedió 2s; resultados PARCIALES: \"<python>\" -u -c \"import sys,time; print('parcial'); sys.stderr.write('aviso\\n'); sys.stderr.flush(); time.sleep(30)\""
+}

@@ -1,0 +1,42 @@
+{
+  "mac": "00:11:22:33:44:55",
+  "os": "Linux 2.6.32 - 3.10",
+  "puertos": [
+    {
+      "estado": "open",
+      "proto": "tcp",
+      "puerto": "22",
+      "servicio": "ssh",
+      "version": "OpenSSH 7.4 (protocol 2.0)"
+    },
+    {
+      "estado": "open",
+      "proto": "tcp",
+      "puerto": "80",
+      "servicio": "http",
+      "version": "Apache httpd 2.4.6 ((CentOS))"
+    },
+    {
+      "estado": "open",
+      "proto": "tcp",
+      "puerto": "443",
+      "servicio": "ssl/http",
+      "version": "Apache httpd 2.4.6"
+    },
+    {
+      "estado": "filtered",
+      "proto": "tcp",
+      "puerto": "445",
+      "servicio": "microsoft-ds",
+      "version": ""
+    },
+    {
+      "estado": "open",
+      "proto": "tcp",
+      "puerto": "3306",
+      "servicio": "mysql",
+      "version": "MySQL 5.5.62"
+    }
+  ],
+  "vendor": "Hewlett Packard"
+}

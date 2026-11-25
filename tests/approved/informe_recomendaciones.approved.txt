@@ -1,0 +1,44 @@
+[
+  {
+    "plazo": "Antes de emitir el informe",
+    "prioridad": "Alta",
+    "rec": "Repetir las pruebas NO concluyentes (fallo, corte por tiempo o sin respuesta) en: 198.51.100.7, 198.51.100.8. Hasta entonces no hay evidencia de ausencia de riesgo.",
+    "responsable": "Equipo auditor"
+  },
+  {
+    "plazo": "7 días",
+    "prioridad": "Alta",
+    "rec": "Aplicar parches y actualizaciones para remediar las vulnerabilidades con CVE (control A.8.8).",
+    "responsable": "Equipo de TI / Sistemas"
+  },
+  {
+    "plazo": "30 días",
+    "prioridad": "Alta",
+    "rec": "Actualizar o reemplazar sistemas operativos y servicios sin soporte de seguridad.",
+    "responsable": "Infraestructura TI"
+  },
+  {
+    "plazo": "15 días",
+    "prioridad": "Media",
+    "rec": "Proteger el acceso remoto (SSH/RDP/VNC) con MFA, contraseñas robustas y listas de control (A.5.15).",
+    "responsable": "Seguridad / TI"
+  },
+  {
+    "plazo": "30 días",
+    "prioridad": "Media",
+    "rec": "Implementar monitorización continua del tráfico y de los eventos de seguridad de la red (A.8.16).",
+    "responsable": "SOC / Seguridad"
+  },
+  {
+    "plazo": "60 días",
+    "prioridad": "Baja",
+    "rec": "Mantener un inventario de activos actualizado y una línea base de configuración segura (A.5.9 / A.8.9).",
+    "responsable": "TI / Gobernanza"
+  },
+  {
+    "plazo": "Trimestral",
+    "prioridad": "Baja",
+    "rec": "Repetir la auditoría periódicamente como parte de la mejora continua del SGSI.",
+    "responsable": "Dirección / Seguridad"
+  }
+]
