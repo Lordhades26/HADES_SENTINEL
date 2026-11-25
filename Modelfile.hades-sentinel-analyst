@@ -1,4 +1,6 @@
-FROM C:\Users\DELL 5420\.ollama\models\blobs\sha256-1eee6953530837b2b17d61a4e6f71a5aa31c9714cfcf3cb141aa5c1972b5116b
+# Blob de pesos esperado: sha256-1eee6953530837b2b17d61a4e6f71a5aa31c9714cfcf3cb141aa5c1972b5116b
+# Comprobar tras crear: ollama show --modelfile HADES-SENTINEL-ANALYST:1.0.0
+FROM dolphin3:8b
 
 SYSTEM """
 Eres HADES SENTINEL ANALYST, una capa consultiva de análisis defensivo.

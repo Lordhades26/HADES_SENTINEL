@@ -16,7 +16,7 @@ autocontenido.
 
 **Restricción de ejecución:** El árbol actual contiene cambios previos. Sólo se
 agregarán al staging los archivos enumerados en este plan. No se hará `push`.
-La ruta del blob es workstation-only para `C:\Users\DELL 5420`; otra cuenta
+La ruta del blob es workstation-only para `%USERPROFILE%`; otra cuenta
 deberá materializar el mismo SHA-256 y regenerar el `FROM`.
 
 ---
@@ -33,7 +33,7 @@ Cambiar `test_versioned_modelfile_has_consultative_contract` para exigir:
 
 ```python
 expected_base = (
-    r"FROM C:\Users\DELL 5420\.ollama\models\blobs"
+    r"FROM %USERPROFILE%\.ollama\models\blobs"
     r"\sha256-1eee6953530837b2b17d61a4e6f71a5a"
     "a31c9714cfcf3cb141aa5c1972b5116b"
 )
@@ -60,7 +60,7 @@ Sustituir la primera línea por la referencia que emitió Ollama 0.32.5 mediante
 `ollama show dolphin3:latest --modelfile`:
 
 ```text
-FROM C:\Users\DELL 5420\.ollama\models\blobs\sha256-1eee6953530837b2b17d61a4e6f71a5aa31c9714cfcf3cb141aa5c1972b5116b
+FROM %USERPROFILE%\.ollama\models\blobs\sha256-1eee6953530837b2b17d61a4e6f71a5aa31c9714cfcf3cb141aa5c1972b5116b
 ```
 
 - [ ] **Step 4: Verificar GREEN y validar con Ollama**

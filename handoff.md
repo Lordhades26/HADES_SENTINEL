@@ -60,7 +60,7 @@ Mejorar HADES SENTINEL. En esta sesión: que la **Fase 1 de descubrimiento** fun
 5. Continuar con otras mejoras de SENTINEL según prioridad.
 
 ## Sesión 2026-11-17 — revisión con ECC + tests de aprobación (anexo)
-- **Objetivo:** revisar SENTINEL con las herramientas de ECC (`E:\Herramientas\ECC`, agentes `python-reviewer` y `security-reviewer`) y mejorarlo con tests de aprobación (golden master).
+- **Objetivo:** revisar SENTINEL con las herramientas de ECC (agentes `python-reviewer` y `security-reviewer`) y mejorarlo con tests de aprobación (golden master).
 - **Estado:** suite **96/96 pytest** y **88/88 `tests/run_all.py`** (antes 83). Nada commiteado (rama `fix/fase4-ia-no-bloqueante`, sigue también el trabajo sin commit del 16-10).
 - **Hecho (cada fix con golden aprobado tras revisar el diff):**
   - `tests/approval.py` (nuevo): golden master sin dependencias (`HADES_APPROVE=1` aprueba; `.received.txt` ignorado en git). `tests/test_aprobacion.py` (nuevo, 13 casos) + `tests/approved/*.approved.txt` (15 goldens): Nuclei, execute, hechos Nmap/perfil SNMP, control IA, TLS/extracto, cadena INFORME_MAESTRO → datos/ISO/recomendaciones, DOCX real, PTR, escalado de descubrimiento.
@@ -70,7 +70,7 @@ Mejorar HADES SENTINEL. En esta sesión: que la **Fase 1 de descubrimiento** fun
   - `auditar_respuesta_ia`: puerto por número completo («80» ya no lo cubre «8080»/«2018»).
   - Seguridad: PTR saneado (`_sanitize_ptr`, RFC 1123) + escape en `nodeLabel` del mapa 3D (XSS→POST /api/scan); cabeceras `X-Frame-Options: DENY`, `CSP frame-ancestors 'none'`, `nosniff`.
 - **Intentos fallidos (se suman a la sección 4):**
-  - Los agentes de ECC (`ecc:python-reviewer`) no existen como subagent_type hasta `/reload-plugins`; se usaron agentes generales que leen `E:\Herramientas\ECC\agents\*.md`.
+  - Los agentes de ECC (`ecc:python-reviewer`) no existen como subagent_type hasta `/reload-plugins`; se usaron agentes generales que leen `ECC\agents\*.md`.
   - El primer golden aprobó el bug (approval «a ciegas»): un golden recién generado SOLO caracteriza; hay que leerlo antes de darlo por especificación.
   - Corrección del revisor: NO existe token `.hades_token` en el código (solo `DETENER_HADES.bat` lo borra); la API sólo tiene guardia Host/Origin y acepta peticiones sin Origin.
 - **Próximos pasos (pendientes de la revisión ECC, por prioridad):**

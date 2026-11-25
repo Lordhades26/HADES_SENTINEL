@@ -21,7 +21,7 @@ panel existente del dashboard, sin ampliar la autoridad consultiva del LLM.
    `push`.
 
 La referencia del blob es deliberadamente **workstation-only**: este repositorio
-se ejecuta desde el perfil `C:\Users\DELL 5420` y Ollama no expande variables de
+se ejecuta desde el perfil `%USERPROFILE%` y Ollama no expande variables de
 entorno dentro de `FROM`. Otro usuario o equipo deberá materializar el mismo
 blob y regenerar esta ruta después de verificar su SHA-256.
 
@@ -29,7 +29,7 @@ blob y regenerar esta ruta después de verificar su SHA-256.
 
 El manifest local:
 
-`C:\Users\DELL 5420\.ollama\models\manifests\registry.ollama.ai\library\dolphin3\latest`
+`%USERPROFILE%\.ollama\models\manifests\registry.ollama.ai\library\dolphin3\latest`
 
 tiene SHA-256:
 
@@ -44,7 +44,7 @@ la capa de pesos Q4_K_M:
 
 La referencia exacta será:
 
-`FROM C:\Users\DELL 5420\.ollama\models\blobs\sha256-1eee6953530837b2b17d61a4e6f71a5aa31c9714cfcf3cb141aa5c1972b5116b`
+`FROM %USERPROFILE%\.ollama\models\blobs\sha256-1eee6953530837b2b17d61a4e6f71a5aa31c9714cfcf3cb141aa5c1972b5116b`
 
 La versión real verificada es Ollama `0.32.5`, y `ollama show
 dolphin3:latest --modelfile` emite esa misma ruta.

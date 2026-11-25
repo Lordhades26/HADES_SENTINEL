@@ -149,7 +149,7 @@ $env:OLLAMA_HOST = '127.0.0.1:11434'
 $env:OLLAMA_ORIGINS = 'http://127.0.0.1:8080,http://localhost:8080'
 Remove-Item Env:OLLAMA_API_KEY -ErrorAction SilentlyContinue
 Start-Process `
-  -FilePath 'C:\Users\DELL 5420\AppData\Local\Programs\Ollama\ollama.exe' `
+  -FilePath "$env:USERPROFILE\AppData\Local\Programs\Ollama\ollama.exe" `
   -ArgumentList 'serve' `
   -WindowStyle Hidden
 ```
@@ -163,7 +163,7 @@ Get-NetTCPConnection -LocalPort 11434 -State Listen
 Get-NetFirewallApplicationFilter |
   Where-Object {
     $_.Program -eq
-    'C:\Users\DELL 5420\AppData\Local\Programs\Ollama\ollama.exe'
+    "$env:USERPROFILE\AppData\Local\Programs\Ollama\ollama.exe"
   } |
   ForEach-Object {
     Get-NetFirewallRule -AssociatedNetFirewallApplicationFilter $_

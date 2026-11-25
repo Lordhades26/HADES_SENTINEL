@@ -132,12 +132,13 @@ class HadesAIConfigurationTests(unittest.TestCase):
             / "Modelfile.hades-sentinel-analyst"
         ).read_text(encoding="utf-8")
         lowered = modelfile.lower()
-        expected_base = (
-            r"FROM C:\Users\DELL 5420\.ollama\models\blobs"
-            r"\sha256-1eee6953530837b2b17d61a4e6f71a5a"
-            "a31c9714cfcf3cb141aa5c1972b5116b"
+        self.assertIn("FROM dolphin3:8b", modelfile.splitlines())
+        self.assertIn(
+            "sha256-1eee6953530837b2b17d61a4e6f71a5a"
+            "a31c9714cfcf3cb141aa5c1972b5116b",
+            modelfile,
         )
-        self.assertEqual(modelfile.splitlines()[0], expected_base)
+        self.assertNotIn("users", lowered)
         self.assertNotIn("FROM dolphin3:latest", modelfile)
         self.assertIn("PARAMETER num_ctx 8192", modelfile)
         self.assertIn("PARAMETER temperature 0", modelfile)

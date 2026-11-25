@@ -34,7 +34,7 @@ HADES se ejecuta después del acuerdo y la autorización del titular de la red. 
 ## Modelo de IA local
 
 HADES usa por defecto `HADES-SENTINEL-ANALYST:1.0.0`, un wrapper versionado
-sobre `dolphin3:latest` (Llama 3.1 8B, cuantización Q4_K_M). La configuración
+sobre `dolphin3:8b` (Llama 3.1 8B, cuantización Q4_K_M). La configuración
 operativa está centralizada en `hades_ai.py`: endpoint
 `http://127.0.0.1:11434/api/generate`, contexto de 8192 tokens, salida máxima
 de 640 tokens, temperatura 0, sin reintentos, streaming y límite de 300 segundos por análisis
