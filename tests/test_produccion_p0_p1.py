@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Regresiones de producción para los cierres P0/P1 de AUDITORIA_CODEX.
+"""Regresiones de producción para los cierres P0/P1 de la auditoría.
 
 Todos los datos de red son sintéticos. Los cinco arreglos se ejecutan como
 ``subTest`` de un único caso para conservar el contrato histórico de 24 casos

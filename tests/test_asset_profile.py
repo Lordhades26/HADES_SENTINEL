@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Perfilado de activos por SNMP + NetBIOS (paridad con LookLAN Network Monitor).
 
-El reversing de LookLAN (REVERSING_LOOKLAN.md) mostró que su valor no está en el
+El reversing de LookLAN mostró que su valor no está en el
 ping sweep sino en enriquecer cada host vivo: SNMP (sysDescr/sysName) para
 identificar electrónica de red gestionable, y NetBIOS para nombre de equipo y
 grupo de trabajo. Estos casos fijan el contrato de los parsers y del comando,

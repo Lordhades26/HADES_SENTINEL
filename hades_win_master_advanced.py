@@ -418,7 +418,7 @@ class HadesMCP:
         return execute(cmd, timeout=self._nmap_subproc_timeout())
 
     # ── Perfilado de activo: SNMP + NetBIOS (paridad con LookLAN) ──────────
-    # El reversing de LookLAN Network Monitor (ver REVERSING_LOOKLAN.md) mostró que
+    # El reversing de LookLAN Network Monitor mostró que
     # su valor diferencial no es el ping sweep, sino ENRIQUECER cada host vivo:
     #   • SNMP (SNMPAPI/MGMTAPI) -> sysDescr/sysName: identifica switches, routers,
     #     APs e impresoras gestionables, con su modelo y firmware.
